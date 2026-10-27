@@ -4,6 +4,11 @@
   "version": "1.0.0",
   "description": "Network observability dashboard on Cloudflare Workers: Ping.pe + Globalping three-target comparisons on configurable country and time-zone schedules.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pongpisit/signalscope.git"
+  },
+  "homepage": "https://github.com/pongpisit/signalscope#readme",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
