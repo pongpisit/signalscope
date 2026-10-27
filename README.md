@@ -110,7 +110,7 @@ Each target stores a full-page PNG, a screen-styled PDF, and a JSON manifest con
 
 Evidence is streamed from private R2 through authenticated endpoints. Login uses signed, HttpOnly, SameSite=Strict cookies, secure cookies in production, same-origin mutation checks, and a database-backed login-attempt limit. Rotating `DASHBOARD_TOKEN` invalidates existing sessions.
 
-A D1 unique index allows one queued/running observation at a time. Scheduled run IDs are deterministic to avoid duplicate cron delivery. Workflow steps durably store each target result. Capture steps are not automatically retried to avoid silently generating a different observation as though it were the original. Run history reconciles interrupted workflows so a terminal failure does not permanently block later observations.
+A D1 unique index allows one queued/running observation at a time. Scheduled run IDs are deterministic to avoid duplicate cron delivery. Workflow steps durably store each target result. Capture steps are not automatically retried to avoid silently generating a different observation as though it were the original; the only retry is browser startup, which measures nothing. Run history reconciles interrupted workflows so a terminal failure does not permanently block later observations.
 
 The dashboard loads every run in the last 30 days, plus the latest 60 runs for individual history inspection when observations are infrequent. Extra manual tests do not truncate the average window. Older D1 records and R2 evidence remain stored; no automatic evidence deletion is configured.
 

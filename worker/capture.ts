@@ -1,4 +1,4 @@
-import puppeteer from "@cloudflare/puppeteer";
+import puppeteer, { type Browser, type Page } from "@cloudflare/puppeteer";
 import type { EvidenceFile, Probe, Result, Target } from "../shared/types";
 import { freezePingPage } from "../shared/page-snapshot";
 import { ipAddress } from "../shared/addresses";
@@ -26,14 +26,42 @@ export async function capture(
     probes: [],
     evidence: [],
   };
-  // The observation intentionally sends no CDP commands while Ping.pe runs.
-  // Its 90-second maximum exceeds Browser Run's default 60-second idle limit.
-  const browser = await puppeteer.launch(env.BROWSER, {
-    keep_alive: seconds * 1000 + 60_000,
-  });
+  // Startup (launch, page, viewport) measures nothing, so transient Browser
+  // Run launch failures can be retried without fabricating a different
+  // observation. Nothing after this loop is retried: one capture is exactly
+  // one observation window, and a re-navigation would be a new measurement.
+  let lastError: unknown;
+  let browser: Browser | undefined;
+  let page: Page | undefined;
+  for (const delay of [0, 3000, 10_000]) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    browser = undefined;
+    try {
+      // The observation intentionally sends no CDP commands while Ping.pe
+      // runs, so the idle timeout must exceed the configured window (the
+      // Browser Run default is only 60 seconds).
+      browser = await puppeteer.launch(env.BROWSER, {
+        keep_alive: seconds * 1000 + 60_000,
+      });
+      page = await browser.newPage();
+      await page.setViewport({
+        width: 1440,
+        height: 1000,
+        deviceScaleFactor: 1,
+      });
+      break;
+    } catch (error) {
+      lastError = error;
+      page = undefined;
+      try {
+        await browser?.close();
+      } catch {
+        // Closing a failed launch must never mask the original error.
+      }
+    }
+  }
+  if (!browser || !page) throw lastError;
   try {
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
     // Normal browser navigation allows Ping.pe's JS cookie check to run itself.
     await page.goto(result.sourceUrl, {
       waitUntil: "domcontentloaded",
