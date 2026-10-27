@@ -1,0 +1,46 @@
+{
+  "name": "signalscope",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Network observability dashboard on Cloudflare Workers: Ping.pe + Globalping three-target comparisons on configurable country and time-zone schedules.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:worker": "wrangler dev --port 8787",
+    "build": "vite build",
+    "types": "wrangler types",
+    "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
+    "test": "vitest run",
+    "test:browser": "playwright test",
+    "verify:hosted": "node scripts/verify-browser.mjs",
+    "format": "prettier --write src shared worker tests scripts *.ts *.json *.jsonc README.md",
+    "deploy": "npm run build && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply pingpe-observatory --local",
+    "db:remote": "wrangler d1 migrations apply pingpe-observatory --remote"
+  },
+  "dependencies": {
+    "@cloudflare/puppeteer": "1.4.0",
+    "@fontsource-variable/manrope": "5.3.0",
+    "@fontsource-variable/space-grotesk": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "lucide-react": "1.61.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "recharts": "3.10.1",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/three": "0.186.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "playwright": "1.64.1",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5",
+    "wrangler": "4.152.0"
+  }
+}

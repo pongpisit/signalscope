@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "signalscope",
+  "account_id": "aa8ab6fe5b7f906df426a972033e922a",
+  "keep_vars": true,
+  "workers_dev": true,
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "browser": { "binding": "BROWSER" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pingpe-observatory",
+      "database_id": "b1f1dd6c-cf77-40d6-885b-02f4962a56ff",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [
+    { "binding": "EVIDENCE", "bucket_name": "pingpe-observatory-evidence" },
+  ],
+  "workflows": [
+    {
+      "binding": "MEASUREMENT",
+      "name": "pingpe-observatory-measurement",
+      "class_name": "MeasurementWorkflow",
+    },
+  ],
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": { "enabled": true, "traces": { "enabled": true } },
+  "upload_source_maps": true,
+}

@@ -1,0 +1,2 @@
+# Copy to .dev.vars and replace with a long, randomly generated password.
+DASHBOARD_TOKEN=replace-with-your-password
