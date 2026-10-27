@@ -17,6 +17,7 @@
     "types": "wrangler types",
     "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
+    "pretest": "npm run build",
     "test:browser": "playwright test",
     "verify:hosted": "node scripts/verify-browser.mjs",
     "format": "prettier --write src shared worker tests scripts *.ts *.json *.jsonc README.md",

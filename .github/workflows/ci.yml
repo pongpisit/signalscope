@@ -17,6 +17,8 @@ jobs:
       - run: npm ci
       - run: npm run types
       - run: npm run check
+      # "npm test" builds first (pretest): the local API suite serves the
+      # assets directory declared in wrangler.jsonc.
       - run: npm test
       # GitHub Actions runners ship Google Chrome, which matches the
       # `channel: "chrome"` setting in playwright.config.ts.
