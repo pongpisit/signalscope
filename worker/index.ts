@@ -22,6 +22,7 @@ import {
   scheduleTimes,
 } from "../shared/schedule";
 import { dispatchScheduled } from "./scheduler";
+import { BodyTooLarge, readJson } from "./body";
 export { MeasurementWorkflow } from "./workflow";
 
 const json = (
@@ -75,7 +76,16 @@ async function api(request: Request, env: Env): Promise<Response> {
         { error: "Too many sign-in attempts. Try again in 15 minutes." },
         429,
       );
-    const body = await request.json<{ token?: string }>();
+    // The Content-Length check above is a fast path only: chunked requests
+    // omit the header, so the cap is enforced again on the bytes read.
+    let body: { token?: string };
+    try {
+      body = await readJson<{ token?: string }>(request, 4096);
+    } catch (error) {
+      if (error instanceof BodyTooLarge)
+        return json({ error: "Request too large." }, 413);
+      throw error;
+    }
     if (
       typeof body.token !== "string" ||
       body.token.length > 1024 ||
@@ -108,7 +118,9 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (path === "/api/settings" && request.method === "PUT") {
     if (Number(request.headers.get("Content-Length") ?? 0) > 10_000)
       return json({ error: "Request too large." }, 413);
-    const body = await request.json<{
+    // The Content-Length check above is a fast path only: chunked requests
+    // omit the header, so the cap is enforced again on the bytes read.
+    let body: {
       targets?: { name?: unknown; url?: unknown }[];
       enabled?: unknown;
       sampleSeconds?: unknown;
@@ -117,7 +129,14 @@ async function api(request: Request, env: Env): Promise<Response> {
       timezone?: unknown;
       ignoredNetworks?: unknown;
       globalpingLimit?: unknown;
-    }>();
+    };
+    try {
+      body = await readJson<typeof body>(request, 10_000);
+    } catch (error) {
+      if (error instanceof BodyTooLarge)
+        return json({ error: "Request too large." }, 413);
+      throw error;
+    }
     if (
       !Array.isArray(body.targets) ||
       body.targets.length !== 3 ||
