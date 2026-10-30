@@ -1,0 +1,21 @@
+src/App.tsx
+  s_a4c97874e20b3d::t_55b0fc3afffb4a 759,761,1717,1719,2067,2138-2142
+tests/scheduler.test.ts
+  s_a4c97874e20b3d::t_2ea1c37aaa583a 28-36,45-53,70,78,82,93-94,105,117,126-128,146-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3c71efb2481d1df479cf3d707780ad01c3354010",
+  "prompts": {},
+  "sessions": {
+    "s_a4c97874e20b3d": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_e8a3e40c8ffeooGmQjWoSnKqFi",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "pongpisit <pongpisit@cloudflare.com>"
+    }
+  }
+}
