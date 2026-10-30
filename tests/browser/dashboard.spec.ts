@@ -126,19 +126,19 @@ test("observation frequency saves, survives reload, shows the next Bangkok slot 
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.locator(".schedule-times")).toContainText("Every 2 hours");
   await expect(page.locator(".schedule-next strong")).toHaveText(
-    "26 Oct · 10:00",
+    "26 Oct · 10:10",
   );
   await page.reload();
   await expect(page.locator(".schedule-times")).toContainText("Every 2 hours");
   await expect(page.locator(".schedule-next strong")).toHaveText(
-    "26 Oct · 10:00",
+    "26 Oct · 10:10",
   );
   await page.setViewportSize({ width: 320, height: 844 });
   await page.getByRole("button", { name: "Configure", exact: true }).click();
   await expect(frequency).toHaveValue("every-2h");
   await frequency.selectOption("every-24h");
   await expect(page.locator(".schedule-preview")).toContainText(
-    "00:00 (UTC+7)",
+    "00:05 (UTC+7)",
   );
   await expect(page.locator(".schedule-preview")).toContainText(
     "1 observation/day",

@@ -5,6 +5,7 @@ import {
   cadenceOptions,
   nextScheduled,
   scheduleTimes,
+  scheduledSlot,
 } from "../shared/schedule";
 import { dispatchScheduled } from "../worker/scheduler";
 
@@ -173,7 +174,7 @@ describe("local Worker API with real D1", () => {
     };
     expect(dashboard.settings.targets[0].hostname).toBe("target-1.example");
     expect(dashboard.settings.enabled).toBe(false);
-    expect(dashboard.schedule).toEqual(["08:00", "17:00"]);
+    expect(dashboard.schedule).toEqual(["08:05", "17:10"]);
   });
   it.each(cadenceOptions)(
     "persists $value and returns its Bangkok schedule",
@@ -493,11 +494,16 @@ describe("local Worker API with real D1", () => {
         deleteBatch: vi.fn<Env["MEASUREMENT"]["deleteBatch"]>(),
       },
     };
-    const slot = Math.floor(Date.now() / 3600_000) * 3600_000;
+    // The dispatcher normalizes legacy rows to the original deployment defaults,
+    // and the hourly slot starts at a staggered :05 or :10 past the hour.
+    const hourFloor = Math.floor(Date.now() / 3600_000) * 3600_000;
+    const slot =
+      scheduledSlot(hourFloor + 59 * 60_000, "every-1h", expectedTimezone) ??
+      hourFloor;
     const clock = vi.spyOn(Date, "now").mockReturnValue(slot + 20_000);
     const id = `scheduled-${slot}`;
     try {
-      for (const delay of [1234, 60_000, 23 * 60_000, 3599_999])
+      for (const delay of [1234, 60_000, 1598_034, 23 * 60_000, 40 * 60_000])
         await dispatchScheduled({ scheduledTime: slot + delay }, env);
       expect(create).toHaveBeenCalledExactlyOnceWith({
         id,

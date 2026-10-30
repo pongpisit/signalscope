@@ -756,9 +756,9 @@ export default function App() {
             <div className="schedule-times">
               {cadence === "twice-daily" ? (
                 <>
-                  <span>08:00</span>
+                  <span>{scheduleTimes(cadence)[0]}</span>
                   <span className="schedule-divider" />
-                  <span>17:00</span>
+                  <span>{scheduleTimes(cadence)[1]}</span>
                 </>
               ) : (
                 <span>{cadenceLabel(cadence)}</span>
@@ -1714,9 +1714,9 @@ function Login({
           </p>
           <div className="login-cadence">
             <Clock3 size={17} />
-            <strong>08:00</strong>
+            <strong>08:05</strong>
             <span>/</span>
-            <strong>17:00</strong>
+            <strong>17:10</strong>
             <small>DEFAULT · CONFIGURABLE</small>
           </div>
         </section>
@@ -2064,7 +2064,7 @@ function SettingsModal({
           <div>
             <strong>
               {cadence === "every-1h"
-                ? "At the start of every hour"
+                ? "Minutes past every hour, alternating :05 and :10"
                 : `${times.join(" · ")} (${timeZoneOffsetLabel(timezone)})`}
             </strong>
             <p>
@@ -2135,9 +2135,11 @@ function SettingsModal({
           and 10 packets per target. Globalping uses up to {3 * limit}{" "}
           probe-tests per run; repeated manual runs can reach the
           unauthenticated 250 tests/hour allowance. The observation window
-          controls Ping.pe only. Interval schedules align to 00:00 in {timezone}
-          ; saving a schedule takes effect at its next matching hour.
-          Overlapping observations are skipped.
+          controls Ping.pe only. Scheduled runs start a few minutes past the
+          hour, alternating :05 and :10 between consecutive slots, so
+          back-to-back Globalping runs never share one rate-limit minute. Saving
+          a schedule takes effect at its next matching slot. Overlapping
+          observations are skipped.
         </p>
         {error && (
           <div className="form-error" role="alert">

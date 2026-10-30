@@ -25,11 +25,15 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("scheduled dispatch", () => {
-  it.each(["2026-10-26T01:00:00Z", "2026-10-26T10:00:00Z"])(
-    "preserves the legacy slot %s with deterministic run IDs",
-    async (time) => {
-      const timestamp = Date.parse(time);
-      await dispatchScheduled({ scheduledTime: timestamp }, env);
+  it.each([
+    // Bangkok 08:05 (first slot of the day) and a delayed 17:10-slot tick.
+    ["2026-10-26T01:05:00Z", "2026-10-26T01:05:00Z"],
+    ["2026-10-26T10:26:38Z", "2026-10-26T10:10:00Z"],
+  ])(
+    "dispatches tick %s as the deterministic slot run ID",
+    async (tick, slot) => {
+      await dispatchScheduled({ scheduledTime: Date.parse(tick) }, env);
+      const timestamp = Date.parse(slot);
       expect(startRun).toHaveBeenCalledExactlyOnceWith(
         env,
         "scheduled",
@@ -38,7 +42,15 @@ describe("scheduled dispatch", () => {
       );
     },
   );
-  it("skips other hours for the twice-daily default", async () => {
+  it("skips ticks before the staggered slot and other non-scheduled hours", async () => {
+    await dispatchScheduled(
+      { scheduledTime: Date.parse("2026-10-26T01:00:00Z") },
+      env,
+    );
+    await dispatchScheduled(
+      { scheduledTime: Date.parse("2026-10-26T10:04:59.999Z") },
+      env,
+    );
     await dispatchScheduled(
       { scheduledTime: Date.parse("2026-10-26T02:00:00Z") },
       env,
@@ -55,7 +67,7 @@ describe("scheduled dispatch", () => {
       cadence: "every-1h",
     });
     await dispatchScheduled(
-      { scheduledTime: Date.parse("2026-10-26T01:00:00Z") },
+      { scheduledTime: Date.parse("2026-10-26T01:26:38Z") },
       env,
     );
     expect(startRun).not.toHaveBeenCalled();
@@ -63,11 +75,11 @@ describe("scheduled dispatch", () => {
   it("uses the latest saved cadence to include only matching Bangkok hours", async () => {
     vi.mocked(settings).mockResolvedValue({ ...base, cadence: "every-2h" });
     await dispatchScheduled(
-      { scheduledTime: Date.parse("2026-10-26T01:00:00Z") },
+      { scheduledTime: Date.parse("2026-10-26T01:26:38Z") },
       env,
     );
     await dispatchScheduled(
-      { scheduledTime: Date.parse("2026-10-26T10:00:00Z") },
+      { scheduledTime: Date.parse("2026-10-26T10:26:38Z") },
       env,
     );
     expect(startRun).toHaveBeenCalledTimes(1);
@@ -78,8 +90,8 @@ describe("scheduled dispatch", () => {
       cadence: "twice-daily",
       timezone: "America/New_York",
     });
-    // Winter: 08:00 New York is 13:00 UTC; a delayed 13:26 tick still recovers it.
-    const slot = Date.parse("2026-01-15T13:00:00Z");
+    // Winter: 08:05 New York is 13:05 UTC; a delayed 13:26 tick still recovers it.
+    const slot = Date.parse("2026-01-15T13:05:00Z");
     await dispatchScheduled(
       { scheduledTime: Date.parse("2026-01-15T13:26:38Z") },
       env,
@@ -90,7 +102,7 @@ describe("scheduled dispatch", () => {
       `scheduled-${slot}`,
       slot,
     );
-    // The legacy Bangkok 08:00 slot (01:00 UTC) is not due in New York.
+    // The legacy Bangkok 08:05 slot (01:05 UTC) is not due in New York.
     await dispatchScheduled(
       { scheduledTime: Date.parse("2026-01-15T01:26:38Z") },
       env,
@@ -102,7 +114,7 @@ describe("scheduled dispatch", () => {
     vi.mocked(startRun)
       .mockResolvedValueOnce({ id: "test", started: true })
       .mockResolvedValueOnce({ id: "test", started: false });
-    const event = { scheduledTime: Date.parse("2026-10-26T02:00:00Z") };
+    const event = { scheduledTime: Date.parse("2026-10-26T02:10:00Z") };
     await dispatchScheduled(event, env);
     await dispatchScheduled(event, env);
     expect(vi.mocked(startRun).mock.calls[0]).toEqual(
@@ -111,9 +123,9 @@ describe("scheduled dispatch", () => {
   });
   it("uses one observation ID across delayed and repeated heartbeat ticks", async () => {
     vi.mocked(settings).mockResolvedValue({ ...base, cadence: "every-1h" });
-    const slot = Date.parse("2026-10-26T06:00:00Z");
-    // Includes the real production event observed at 06:26:38.034 UTC.
-    for (const delay of [1234, 60_000, 23 * 60_000, 1598_034, 3599_999]) {
+    // Bangkok 13:10 (06:10 UTC) is the 14th hourly slot, so it starts at :10.
+    const slot = Date.parse("2026-10-26T06:10:00Z");
+    for (const delay of [1234, 60_000, 1598_034, 23 * 60_000, 45 * 60_000]) {
       await dispatchScheduled({ scheduledTime: slot + delay }, env);
     }
     expect(startRun).toHaveBeenCalledTimes(5);
@@ -131,8 +143,8 @@ describe("scheduled dispatch", () => {
       env,
     );
     expect(startRun).not.toHaveBeenCalled();
-    const slot = Date.parse("2026-10-26T07:00:00Z");
-    await dispatchScheduled({ scheduledTime: slot + 60_000 }, env);
+    const slot = Date.parse("2026-10-26T07:05:00Z");
+    await dispatchScheduled({ scheduledTime: slot }, env);
     expect(startRun).toHaveBeenCalledExactlyOnceWith(
       env,
       "scheduled",

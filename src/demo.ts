@@ -54,7 +54,7 @@ export function demoDashboard(): Dashboard {
       globalpingLimit: 30,
     },
     timezone: "Asia/Bangkok",
-    schedule: ["08:00", "17:00"],
+    schedule: ["08:05", "17:10"],
     runs: Array.from({ length: 14 }, (_, i) => {
       const time = new Date(today);
       time.setUTCDate(time.getUTCDate() - Math.floor(i / 2));
