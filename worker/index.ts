@@ -7,6 +7,7 @@ import {
 import {
   clearHistory,
   defaultSettings,
+  deleteRun,
   listRuns,
   normalizeCountry,
   normalizeGlobalpingLimit,
@@ -232,6 +233,24 @@ async function api(request: Request, env: Env): Promise<Response> {
         409,
       );
     return json(result);
+  }
+  const runToDelete = path.match(/^\/api\/runs\/([\w-]+)$/);
+  if (runToDelete && request.method === "DELETE") {
+    const result = await deleteRun(env, runToDelete[1]);
+    if (result.outcome === "missing")
+      return json({ error: "This observation does not exist." }, 404);
+    if (result.outcome === "active")
+      return json(
+        {
+          error: "This observation is still running. Wait for it to finish.",
+        },
+        409,
+      );
+    return json({
+      deleted: true,
+      runId: runToDelete[1],
+      deletedFiles: result.deletedFiles,
+    });
   }
   const evidence = path.match(
     /^\/api\/evidence\/([\w-]+)\/(target-[123])\/(png|pdf|json)$/,

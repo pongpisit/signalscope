@@ -220,9 +220,12 @@ export default function App() {
   } | null>(null);
   const [data, setData] = useState<Dashboard | null>(null);
   const [demo, setDemo] = useState(false);
-  const [page, setPage] = useState(() =>
-    window.location.hash === "#country" ? "country" : "overview",
-  );
+  const [page, setPage] = useState(() => {
+    const hash = window.location.hash.replace("#", "");
+    return ["country", "evidence", "history"].includes(hash)
+      ? hash
+      : "overview";
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [region, setRegion] = useState("all");
@@ -240,6 +243,8 @@ export default function App() {
   const [pending, setPending] = useState(false);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [clearingHistory, setClearingHistory] = useState(false);
+  const [deleteDialogRun, setDeleteDialogRun] = useState<Run | null>(null);
+  const [deletingRun, setDeletingRun] = useState(false);
   const refreshVersion = useRef(0);
   const [viewer, setViewer] = useState<{ run: Run; result: Result } | null>(
     null,
@@ -473,6 +478,36 @@ export default function App() {
       setPending(false);
     }
   }
+  async function deleteRunData() {
+    if (!deleteDialogRun) return;
+    const target = deleteDialogRun;
+    setDeletingRun(true);
+    setError("");
+    try {
+      if (!demo) await api(`/runs/${target.id}`, "DELETE");
+      // Invalidate any in-flight periodic refresh so it cannot resurrect the
+      // run, then apply the removal locally; the next poll re-syncs.
+      ++refreshVersion.current;
+      if (selectedId === target.id) setSelectedId("");
+      if (viewer?.run.id === target.id) setViewer(null);
+      setDeleteDialogRun(null);
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              runs: current.runs.filter((run) => run.id !== target.id),
+            }
+          : current,
+      );
+      setNotice("Observation deleted.");
+    } catch (e) {
+      setError((e as Error).message);
+      setDeleteDialogRun(null);
+    } finally {
+      setDeletingRun(false);
+    }
+  }
+
   async function clearHistoryData() {
     setClearingHistory(true);
     setError("");
@@ -1443,40 +1478,51 @@ export default function App() {
                   </div>
                   <div className="run-list">
                     {data.runs.map((r) => (
-                      <button
-                        key={r.id}
-                        className="run-row"
-                        onClick={() => {
-                          setSelectedId(r.id);
-                          navigate("overview");
-                        }}
-                      >
-                        <span className={`run-status-icon ${r.status}`}>
-                          <Activity size={18} />
-                        </span>
-                        <span>
-                          <strong>
-                            {date(r.startedAt, true, tz)}{" "}
-                            <small>{tzOffset}</small>
-                          </strong>
-                          <small>
-                            {r.source === "scheduled"
-                              ? "Scheduled observation"
-                              : "On-demand observation"}{" "}
-                            · {r.results.length}/3 targets captured
-                            {" · "}
-                            {r.globalpingResults?.length ?? 0}/3 Globalping
-                            measurements
-                          </small>
-                          {r.error && (
-                            <small className="lossy">{r.error}</small>
-                          )}
-                        </span>
-                        <span className={`status-chip ${r.status}`}>
-                          {r.status}
-                        </span>
-                        <ArrowUpRight size={17} />
-                      </button>
+                      <div className="run-row-wrap" key={r.id}>
+                        <button
+                          className="run-row"
+                          onClick={() => {
+                            setSelectedId(r.id);
+                            navigate("overview");
+                          }}
+                        >
+                          <span className={`run-status-icon ${r.status}`}>
+                            <Activity size={18} />
+                          </span>
+                          <span>
+                            <strong>
+                              {date(r.startedAt, true, tz)}{" "}
+                              <small>{tzOffset}</small>
+                            </strong>
+                            <small>
+                              {r.source === "scheduled"
+                                ? "Scheduled observation"
+                                : "On-demand observation"}{" "}
+                              · {r.results.length}/3 targets captured
+                              {" · "}
+                              {r.globalpingResults?.length ?? 0}/3 Globalping
+                              measurements
+                            </small>
+                            {r.error && (
+                              <small className="lossy">{r.error}</small>
+                            )}
+                          </span>
+                          <span className={`status-chip ${r.status}`}>
+                            {r.status}
+                          </span>
+                          <ArrowUpRight size={17} />
+                        </button>
+                        {!busyRun(r) && (
+                          <button
+                            className="run-row-delete"
+                            aria-label={`Delete observation from ${date(r.startedAt, true, tz)} ${tzOffset}`}
+                            title="Delete this observation and its evidence"
+                            onClick={() => setDeleteDialogRun(r)}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
                     ))}
                     {!data.runs.length && (
                       <div className="table-empty">
@@ -1524,6 +1570,42 @@ export default function App() {
         />
       )}
       {viewer && <EvidenceViewer {...viewer} onClose={() => setViewer(null)} />}
+      {deleteDialogRun && (
+        <Modal
+          title="Delete this observation?"
+          onClose={() => {
+            if (!deletingRun) setDeleteDialogRun(null);
+          }}
+        >
+          <div className="clear-history-content">
+            <p className="modal-description">
+              Removes the observation from{" "}
+              <strong>
+                {date(deleteDialogRun.startedAt, true, tz)} {tzOffset}
+              </strong>{" "}
+              and all of its stored PNG, PDF, and JSON evidence. Other
+              observations, your targets, and your schedule are kept.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="button secondary"
+                disabled={deletingRun}
+                onClick={() => setDeleteDialogRun(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="button danger"
+                disabled={deletingRun}
+                onClick={deleteRunData}
+              >
+                <Trash2 size={15} />
+                {deletingRun ? "Deleting…" : "Delete observation"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {clearDialogOpen && (
         <Modal
           title="Clear observation history?"

@@ -196,6 +196,38 @@ export async function clearHistory(env: Env) {
   return { cleared: true, deletedRuns, deletedFiles };
 }
 
+export async function deleteRun(env: Env, id: string) {
+  const run = await env.DB.prepare("SELECT id, status FROM runs WHERE id = ?")
+    .bind(id)
+    .first<{ id: string; status: Run["status"] }>();
+  if (!run) return { outcome: "missing" as const };
+  if (["queued", "running"].includes(run.status))
+    return { outcome: "active" as const };
+
+  let deletedFiles = 0;
+  // Prefix-scoped deletion also removes captures stored before a failed
+  // result write, and it never touches another run's evidence.
+  while (true) {
+    const objects = await env.EVIDENCE.list({ prefix: `${id}/`, limit: 1000 });
+    if (!objects.objects.length) break;
+    await env.EVIDENCE.delete(objects.objects.map((object) => object.key));
+    deletedFiles += objects.objects.length;
+  }
+  // Remove the ledger only after its evidence is gone, so an interrupted
+  // request can safely be retried. The status guard keeps an in-flight
+  // observation undeletable even if it changed state since the check above.
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM results WHERE run_id = ?").bind(id),
+    env.DB.prepare(
+      "DELETE FROM runs WHERE id = ? AND status NOT IN ('queued', 'running')",
+    ).bind(id),
+  ]);
+  console.log(
+    JSON.stringify({ event: "run_deleted", runId: id, deletedFiles }),
+  );
+  return { outcome: "deleted" as const, deletedFiles };
+}
+
 export async function startRun(
   env: Env,
   source: Run["source"],

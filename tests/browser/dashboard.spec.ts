@@ -79,7 +79,7 @@ test("observation frequency saves, survives reload, shows the next Bangkok slot 
   page,
 }) => {
   await page.clock.setFixedTime(new Date("2026-10-26T02:35:00Z"));
-  const fixture = demoDashboard();
+  const fixture = demoDashboard(new Date("2026-10-26T02:35:00Z"));
   let runRequests = 0;
   await page.route("**/api/session", (route) =>
     route.fulfill({ json: { configured: true, authenticated: true } }),
@@ -166,7 +166,7 @@ test("country, time zone, probe count and ignored networks save and drive the co
   page,
 }) => {
   await page.clock.setFixedTime(new Date("2026-10-26T02:35:00Z"));
-  const fixture = demoDashboard();
+  const fixture = demoDashboard(new Date("2026-10-26T02:35:00Z"));
   await page.route("**/api/session", (route) =>
     route.fulfill({ json: { configured: true, authenticated: true } }),
   );
@@ -597,6 +597,65 @@ test("clear history is disabled while a measurement is running", async ({
     page.getByRole("button", { name: "Clear history", exact: true }),
   ).toBeDisabled();
   await expect(page.locator(".target-card")).toHaveCount(3);
+});
+
+test("history deletes one observation after confirmation and keeps the rest", async ({
+  page,
+}) => {
+  const fixture = demoDashboard();
+  const deleted: string[] = [];
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { configured: true, authenticated: true } }),
+  );
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({ json: fixture }),
+  );
+  await page.route("**/api/runs/*", async (route) => {
+    expect(route.request().method()).toBe("DELETE");
+    const id = new URL(route.request().url()).pathname.split("/").pop()!;
+    deleted.push(id);
+    fixture.runs = fixture.runs.filter((run) => run.id !== id);
+    await route.fulfill({
+      json: { deleted: true, runId: id, deletedFiles: 6 },
+    });
+  });
+  await page.goto("/#history");
+  const rows = page.locator(".run-row");
+  await expect(rows).toHaveCount(14);
+  const deleteButtons = page.getByRole("button", {
+    name: /Delete observation from/,
+  });
+  await expect(deleteButtons).toHaveCount(14);
+
+  // Cancelling the confirmation deletes nothing.
+  await deleteButtons.first().click();
+  const dialog = page.getByRole("dialog", {
+    name: "Delete this observation?",
+  });
+  await expect(dialog).toContainText("Removes the observation from");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(rows).toHaveCount(14);
+  expect(deleted).toEqual([]);
+
+  // Confirming removes exactly that observation and keeps the others.
+  await deleteButtons.first().click();
+  await dialog
+    .getByRole("button", { name: "Delete observation", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(rows).toHaveCount(13);
+  expect(deleted).toEqual(["demo-0"]);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Observation deleted" }),
+  ).toBeVisible();
+  await expect(rows.first()).toContainText("Scheduled observation");
+
+  // Running observations expose no delete control.
+  fixture.runs[0].status = "running";
+  await page.reload();
+  await expect(rows).toHaveCount(13);
+  await expect(deleteButtons).toHaveCount(12);
 });
 
 test("the capture parser keeps missing samples null and freezes canvas evidence", async ({

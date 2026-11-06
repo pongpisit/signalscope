@@ -37,8 +37,8 @@ const locations = [
   ["US_2", "USA, New York", "Sample network", 231],
 ] as const;
 
-export function demoDashboard(): Dashboard {
-  const today = new Date();
+export function demoDashboard(now: Date = new Date()): Dashboard {
+  const today = new Date(now);
   today.setUTCMinutes(0, 0, 0);
   today.setUTCHours(10);
   if (today > new Date()) today.setUTCDate(today.getUTCDate() - 1);

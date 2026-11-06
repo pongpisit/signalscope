@@ -44,10 +44,10 @@ beforeAll(async () => {
   await platform.env.DB.batch([
     platform.env.DB.prepare("DELETE FROM settings"),
     platform.env.DB.prepare(
-      "DELETE FROM results WHERE run_id LIKE 'clear-fixture-%' OR run_id = 'clear-active-fixture'",
+      "DELETE FROM results WHERE run_id LIKE 'clear-fixture-%' OR run_id = 'clear-active-fixture' OR run_id LIKE 'delete-fixture-%' OR run_id = 'delete-active'",
     ),
     platform.env.DB.prepare(
-      "DELETE FROM runs WHERE id LIKE 'clear-fixture-%' OR id = 'clear-active-fixture'",
+      "DELETE FROM runs WHERE id LIKE 'clear-fixture-%' OR id = 'clear-active-fixture' OR id LIKE 'delete-fixture-%' OR id = 'delete-active'",
     ),
   ]);
   await platform.env.DB.batch(
@@ -133,6 +133,7 @@ describe("local Worker API with real D1", () => {
     expect((await request("/dashboard")).status).toBe(401);
     expect((await request("/evidence/no-run/target-1/png")).status).toBe(401);
     expect((await request("/history", "DELETE")).status).toBe(401);
+    expect((await request("/runs/some-run", "DELETE")).status).toBe(401);
   });
   it("rejects cross-origin login and incorrect credentials", async () => {
     expect(
@@ -460,6 +461,107 @@ describe("local Worker API with real D1", () => {
       deletedRuns: 0,
       deletedFiles: 0,
     });
+  });
+  it("deletes one observation with its results and evidence while protecting active runs", async () => {
+    await platform.env.DB.batch([
+      platform.env.DB.prepare(
+        "INSERT INTO runs (id, started_at, completed_at, source, status, targets, country, timezone) VALUES ('delete-fixture-a', '2026-10-20T05:00:00.000Z', '2026-10-20T05:06:00.000Z', 'manual', 'complete', '[]', 'TH', 'Asia/Bangkok')",
+      ),
+      platform.env.DB.prepare(
+        "INSERT INTO runs (id, started_at, completed_at, source, status, targets) VALUES ('delete-fixture-b', '2026-10-20T09:00:00.000Z', '2026-10-20T09:06:00.000Z', 'scheduled', 'partial', '[]')",
+      ),
+      platform.env.DB.prepare(
+        "INSERT INTO runs (id, started_at, source, status, targets) VALUES ('delete-active', ?, 'manual', 'queued', '[]')",
+      ).bind(new Date().toISOString()),
+    ]);
+    await platform.env.DB.prepare(
+      "INSERT INTO results (run_id, target_id, value) VALUES ('delete-fixture-a', 'target-1', ?)",
+    )
+      .bind(
+        JSON.stringify({
+          targetId: "target-1",
+          targetName: "Test",
+          hostname: "target-1.example",
+          status: "complete",
+          capturedAt: "2026-10-20T05:06:00.000Z",
+          sourceUrl: "https://ping.pe/target-1.example",
+          probes: [],
+          evidence: [],
+        }),
+      )
+      .run();
+    for (const key of [
+      "delete-fixture-a/target-1/evidence.png",
+      "delete-fixture-a/target-1/evidence.json",
+      "delete-fixture-b/target-1/evidence.png",
+    ])
+      await platform.env.EVIDENCE.put(key, "single-delete test fixture");
+    try {
+      // Unknown runs, cross-origin requests, and running observations are refused.
+      expect((await request("/runs/never-existed", "DELETE")).status).toBe(404);
+      expect(
+        (
+          await request(
+            "/runs/delete-fixture-a",
+            "DELETE",
+            undefined,
+            "https://elsewhere.example",
+          )
+        ).status,
+      ).toBe(403);
+      const active = await request("/runs/delete-active", "DELETE");
+      expect(active.status).toBe(409);
+      expect(await active.json()).toEqual({
+        error: "This observation is still running. Wait for it to finish.",
+      });
+
+      const response = await request("/runs/delete-fixture-a", "DELETE");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        deleted: true,
+        runId: "delete-fixture-a",
+        deletedFiles: 2,
+      });
+      expect(
+        (await request("/evidence/delete-fixture-a/target-1/png")).status,
+      ).toBe(404);
+      const dashboard = (await (await request("/dashboard")).json()) as {
+        runs: { id: string }[];
+      };
+      expect(dashboard.runs.map((r) => r.id)).toEqual([
+        "delete-active",
+        "delete-fixture-b",
+      ]);
+      expect(
+        (
+          await platform.env.DB.prepare(
+            "SELECT COUNT(*) AS count FROM results WHERE run_id = 'delete-fixture-a'",
+          ).first<{ count: number }>()
+        )?.count,
+      ).toBe(0);
+      // The untouched neighbour keeps its evidence.
+      expect(
+        (await request("/evidence/delete-fixture-b/target-1/png")).status,
+      ).toBe(200);
+      // Deleting the same run again reports it missing.
+      expect((await request("/runs/delete-fixture-a", "DELETE")).status).toBe(
+        404,
+      );
+    } finally {
+      await platform.env.DB.batch([
+        platform.env.DB.prepare(
+          "DELETE FROM results WHERE run_id LIKE 'delete-fixture-%' OR run_id = 'delete-active'",
+        ),
+        platform.env.DB.prepare(
+          "DELETE FROM runs WHERE id LIKE 'delete-fixture-%' OR id = 'delete-active'",
+        ),
+      ]);
+      await platform.env.EVIDENCE.delete([
+        "delete-fixture-a/target-1/evidence.png",
+        "delete-fixture-a/target-1/evidence.json",
+        "delete-fixture-b/target-1/evidence.png",
+      ]);
+    }
   });
   it("returns a missing-evidence error and invalidates sign-out", async () => {
     expect((await request("/evidence/no-run/target-1/png")).status).toBe(404);

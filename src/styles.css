@@ -1553,6 +1553,30 @@ td:first-child {
 .history-panel .panel-heading > .muted {
   font-size: 10px;
 }
+.run-row-wrap {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid #22354b;
+}
+.run-row-wrap .run-row {
+  flex: 1;
+  min-width: 0;
+  border-top: 0;
+}
+.run-row-delete {
+  flex-shrink: 0;
+  margin-right: 16px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: #7e93ac;
+}
+.run-row-delete:hover {
+  color: #eea1a8;
+  background: #482e3a;
+}
 .run-row {
   display: flex;
   align-items: center;
@@ -2868,6 +2892,11 @@ legend i {
   }
   .run-row > svg {
     display: none;
+  }
+  .run-row-delete {
+    margin-right: 8px;
+    width: 30px;
+    height: 30px;
   }
   .modal-backdrop {
     padding: 10px;
