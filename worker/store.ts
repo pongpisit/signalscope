@@ -301,8 +301,8 @@ export async function startRun(
   scheduledAt?: number,
 ) {
   const config = await settings(env);
-  if (config.targets.length !== 3)
-    throw new Error("Configure three targets before starting a run.");
+  if (!config.targets.length)
+    throw new Error("Add at least one target before starting a run.");
   const country = config.country ?? legacyCountry;
   const timezone = config.timezone ?? defaultTimeZone;
   const globalpingLimit = config.globalpingLimit ?? 30;

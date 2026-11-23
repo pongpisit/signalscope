@@ -3,7 +3,7 @@ import { excludedNetwork, mean, summarize } from "./metrics";
 import type { Probe, Result, Run, Summary, Target } from "./types";
 
 export function commonIds(results: Result[]) {
-  if (results.length !== 3) return new Set<string>();
+  if (!results.length) return new Set<string>();
   return new Set(
     results[0].probes
       .filter(
@@ -54,16 +54,22 @@ function averageProbes(samples: Probe[], id: string, testCount: number): Probe {
   };
 }
 
+// A window is either a rolling day count ending at `now`, or an explicit
+// epoch-millisecond range for the dashboard's custom date filter.
+export type ObservationWindow = number | { from: number; to: number };
+
 export function averageRuns(
   runs: Run[],
   targets: Target[],
   source: "pingpe" | "globalping",
-  days: number,
+  window: ObservationWindow,
   now: number,
   includeProbe: (probe: Probe) => boolean = () => true,
   ignored: readonly string[] = [],
 ): { results: Result[]; summaries: Summary[]; testCount: number } {
-  const cutoff = now - days * 86400_000;
+  const since =
+    typeof window === "number" ? now - window * 86400_000 : window.from;
+  const until = typeof window === "number" ? now : window.to;
   const observations: {
     results: Result[];
     probes: Probe[][];
@@ -74,9 +80,9 @@ export function averageRuns(
     if (
       ["queued", "running"].includes(run.status) ||
       !Number.isFinite(started) ||
-      started < cutoff ||
-      started > now ||
-      targets.length !== 3
+      started < since ||
+      started > until ||
+      !targets.length
     )
       continue;
     const available =

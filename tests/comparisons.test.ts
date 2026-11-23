@@ -270,4 +270,64 @@ describe("selected-window test averages", () => {
     expect(view.results).toEqual([]);
     expect(view.summaries[0].avg).toBeNull();
   });
+  it("supports custom epoch-millisecond windows alongside rolling day counts", () => {
+    const runs = [
+      run(1, [probe(10)]),
+      run(5, [probe(30)]),
+      run(9, [probe(50)]),
+      run(13, [probe(70)]),
+    ];
+    // Only the middle two runs (ages 5 and 9 days) fall inside the range.
+    const view = averageRuns(
+      runs,
+      targets,
+      "pingpe",
+      { from: now - 10 * 86400_000, to: now - 4 * 86400_000 },
+      now,
+    );
+    expect(view.testCount).toBe(2);
+    expect(view.summaries.map((s) => s.avg)).toEqual([40, 40, 40]);
+    // The same data over a rolling 2-day window centred on now finds only
+    // the newest test, proving both window shapes filter independently.
+    expect(averageRuns(runs, targets, "pingpe", 2, now).testCount).toBe(1);
+  });
+  it("averages any number of targets, not only three", () => {
+    // Two targets: drop the third result from every run.
+    const two = targets.slice(0, 2).map((t, i) => t);
+    const runs = [
+      {
+        ...run(1, [probe(10)]),
+        results: run(1, [probe(10)]).results.slice(0, 2),
+        targets: two,
+      },
+    ];
+    const twoView = averageRuns(runs, two, "pingpe", 7, now);
+    expect(twoView.testCount).toBe(1);
+    expect(twoView.summaries.map((s) => s.avg)).toEqual([10, 10]);
+    // Five targets: extend the fixture with two more hostnames.
+    const five = [
+      ...targets,
+      ...[3, 4].map((i) => ({
+        id: `t${i}`,
+        name: `Target ${i}`,
+        hostname: `t${i}.example`,
+        url: `https://t${i}.example`,
+      })),
+    ];
+    const fiveRun = {
+      ...run(1, [probe(10)]),
+      targets: five,
+      results: five.map((t, i) => ({
+        ...run(1, [probe(10)]).results[i % 3],
+        hostname: t.hostname,
+        targetId: t.id,
+      })),
+    };
+    const fiveView = averageRuns([fiveRun], five, "pingpe", 7, now);
+    expect(fiveView.testCount).toBe(1);
+    expect(fiveView.summaries).toHaveLength(5);
+    expect(new Set(fiveView.summaries.map((s) => s.avg))).toEqual(
+      new Set([10]),
+    );
+  });
 });

@@ -124,21 +124,22 @@ async function api(request: Request, env: Env): Promise<Response> {
     }>();
     if (
       !Array.isArray(body.targets) ||
-      body.targets.length !== 3 ||
+      body.targets.length < 1 ||
+      body.targets.length > 12 ||
       body.targets.some((t) => !t || typeof t !== "object")
     )
-      return json({ error: "Configure exactly three targets." }, 400);
+      return json({ error: "Add between 1 and 12 targets." }, 400);
     let targets;
     try {
       targets = body.targets.map(normalizeTarget);
     } catch (e) {
       return json({ error: (e as Error).message }, 400);
     }
-    if (new Set(targets.map((t) => t.hostname)).size !== 3)
+    if (new Set(targets.map((t) => t.hostname)).size !== targets.length)
       return json(
         {
           error:
-            "Choose three different hostnames. Ping.pe does not compare URL paths.",
+            "Choose a different hostname for every target. Ping.pe does not compare URL paths.",
         },
         400,
       );
@@ -215,8 +216,8 @@ async function api(request: Request, env: Env): Promise<Response> {
     return json(value);
   }
   if (path === "/api/runs" && request.method === "POST") {
-    if ((await settings(env)).targets.length !== 3)
-      return json({ error: "Configure three targets first." }, 400);
+    if (!(await settings(env)).targets.length)
+      return json({ error: "Add at least one target first." }, 400);
     const run = await startRun(env, "manual");
     return run.started
       ? json(run, 202)
@@ -263,7 +264,7 @@ async function api(request: Request, env: Env): Promise<Response> {
     return json(run);
   }
   const evidence = path.match(
-    /^\/api\/evidence\/([\w-]+)\/(target-[123])\/(png|pdf|json)$/,
+    /^\/api\/evidence\/([\w-]+)\/(target-\d+)\/(png|pdf|json)$/,
   );
   if (evidence && request.method === "GET") {
     const [, runId, targetId, kind] = evidence;

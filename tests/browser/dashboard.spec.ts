@@ -701,6 +701,88 @@ test("older observations load their results on demand", async ({ page }) => {
   expect(detailRequests).toBe(1);
 });
 
+test("configuration adds and removes targets dynamically", async ({ page }) => {
+  const fixture = demoDashboard();
+  const savedTargets: { name: string; url: string }[][] = [];
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { configured: true, authenticated: true } }),
+  );
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({ json: fixture }),
+  );
+  await page.route("**/api/settings", async (route) => {
+    const body = route.request().postDataJSON();
+    savedTargets.push(body.targets);
+    fixture.settings = {
+      ...fixture.settings,
+      ...body,
+      targets: body.targets.map((target: { name: string; url: string }, i) => ({
+        id: `target-${i + 1}`,
+        name: target.name,
+        url: target.url,
+        hostname: new URL(
+          target.url.includes("://") ? target.url : `https://${target.url}`,
+        ).hostname,
+      })),
+    };
+    await route.fulfill({ json: fixture.settings });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Configure", exact: true }).click();
+  const fields = page.locator("fieldset");
+  await expect(fields).toHaveCount(3);
+  await page.getByRole("button", { name: "Add target" }).click();
+  await expect(fields).toHaveCount(4);
+  await expect(fields.nth(3)).toContainText("TARGET D");
+  await fields.nth(3).getByLabel("Display name").fill("Delta");
+  await fields.nth(3).getByLabel("URL or hostname").fill("delta.example");
+  await page
+    .getByRole("button", { name: "Save configuration", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator(".target-card")).toHaveCount(4);
+  await expect(page.locator(".target-card").nth(3)).toContainText(
+    "delta.example",
+  );
+  expect(savedTargets.at(-1)).toHaveLength(4);
+  // Removing a target row persists the smaller list.
+  await page.getByRole("button", { name: "Configure", exact: true }).click();
+  await fields
+    .nth(3)
+    .getByRole("button", { name: "Remove target Delta" })
+    .click();
+  await expect(fields).toHaveCount(3);
+  await page
+    .getByRole("button", { name: "Save configuration", exact: true })
+    .click();
+  await expect(page.locator(".target-card")).toHaveCount(3);
+  expect(savedTargets.at(-1)).toHaveLength(3);
+});
+
+test("custom date range narrows the averaging window", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-23T05:00:00Z"));
+  const fixture = demoDashboard(new Date("2026-11-23T05:00:00Z"));
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { configured: true, authenticated: true } }),
+  );
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({ json: fixture }),
+  );
+  await page.goto("/");
+  await expect(page.locator(".section-title")).toContainText(
+    "7D average · 13 tests",
+  );
+  await page.getByLabel("Range start date").fill("2026-11-18");
+  await page.getByLabel("Range end date").fill("2026-11-20");
+  await expect(page.locator(".section-title")).toContainText(
+    "18 Nov → 20 Nov average · 6 tests",
+  );
+  await expect(page.locator("tbody tr").first()).toBeVisible();
+  // A preset click clears the custom range and returns to the rolling window.
+  await page.getByRole("button", { name: "7D", exact: true }).click();
+  await expect(page.locator(".section-title")).toContainText("7D average ·");
+  await expect(page.locator(".section-title")).not.toContainText("18 Nov");
+});
 test("the capture parser keeps missing samples null and freezes canvas evidence", async ({
   page,
 }) => {

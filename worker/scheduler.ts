@@ -12,7 +12,7 @@ export async function dispatchScheduled(
     cron: controller.cron,
     checkedAt: new Date().toISOString(),
   };
-  if (!config.enabled || config.targets.length !== 3) {
+  if (!config.enabled || !config.targets.length) {
     console.log(
       JSON.stringify({
         event: "schedule_skipped",

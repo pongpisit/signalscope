@@ -179,6 +179,50 @@ describe("local Worker API with real D1", () => {
     expect(dashboard.settings.enabled).toBe(false);
     expect(dashboard.schedule).toEqual(["08:05", "17:10"]);
   });
+  it("accepts between 1 and 12 targets and rejects anything else", async () => {
+    const base = { enabled: false, sampleSeconds: 45 };
+    const distinct = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        name: `T${i}`,
+        url: `https://host-${i}.example`,
+      }));
+    expect(
+      (await request("/settings", "PUT", { ...base, targets: [] })).status,
+    ).toBe(400);
+    expect(
+      (
+        await request("/settings", "PUT", {
+          ...base,
+          targets: distinct(13),
+        })
+      ).status,
+    ).toBe(400);
+    for (const count of [1, 2, 12]) {
+      const saved = await request("/settings", "PUT", {
+        ...base,
+        targets: distinct(count),
+      });
+      expect(saved.status).toBe(200);
+      const dashboard = (await (await request("/dashboard")).json()) as {
+        settings: { targets: unknown[] };
+      };
+      expect(dashboard.settings.targets).toHaveLength(count);
+    }
+    // Duplicate hostnames are still rejected at any count.
+    expect(
+      (
+        await request("/settings", "PUT", {
+          ...base,
+          targets: [targets[0], targets[0]],
+        })
+      ).status,
+    ).toBe(400);
+    // Restore the shared three-target fixture for the following tests.
+    await request("/settings", "PUT", {
+      ...base,
+      targets,
+    });
+  });
   it.each(cadenceOptions)(
     "persists $value and returns its Bangkok schedule",
     async ({ value }) => {

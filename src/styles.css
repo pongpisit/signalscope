@@ -742,7 +742,7 @@ main {
 }
 .target-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 16px;
   margin-bottom: 20px;
 }
@@ -921,6 +921,24 @@ main {
 .segmented .active {
   background: #283a51;
   color: #dfebf8;
+}
+.date-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 10px;
+  color: #7e93ac;
+  font: 9px var(--mono);
+}
+.date-range input {
+  padding: 5px 6px;
+  font: 9px var(--mono);
+  color: #c9dcee;
+  background: #0c1625;
+}
+.date-range input::-webkit-calendar-picker-indicator {
+  filter: invert(0.65);
+  cursor: pointer;
 }
 .chart-controls {
   display: flex;
@@ -1733,7 +1751,29 @@ legend i {
   height: 5px;
   display: inline-block;
   border-radius: 50%;
-  margin-right: 7px;
+  margin-right: 5px;
+}
+.target-remove {
+  margin-left: 8px;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: #7e93ac;
+  vertical-align: middle;
+}
+.target-remove:hover {
+  color: #eea1a8;
+  background: #482e3a;
+}
+.add-target {
+  align-self: flex-start;
+  font-size: 10px;
+  gap: 6px;
+}
+.add-target-icon {
+  transform: rotate(45deg);
 }
 .target-field-row {
   display: grid;

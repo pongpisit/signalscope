@@ -71,7 +71,11 @@ import { timeZoneOffsetLabel } from "../shared/time";
 import { demoDashboard } from "./demo";
 import DatasetSelector from "./DatasetSelector";
 import { destinationIps } from "../shared/addresses";
-import { averageRuns, commonIds } from "../shared/comparisons";
+import {
+  averageRuns,
+  commonIds,
+  type ObservationWindow,
+} from "../shared/comparisons";
 import {
   cadenceLabel,
   cadenceOptions,
@@ -82,8 +86,23 @@ import {
 } from "../shared/schedule";
 
 const Globe = lazy(() => import("./Globe"));
-const colors = ["#98ddff", "#cab5ff", "#f3c98c"];
+// Enough distinct hues for the supported target maximum.
+const colors = [
+  "#98ddff",
+  "#cab5ff",
+  "#f3c98c",
+  "#9bd6b5",
+  "#f2a7a7",
+  "#a7c4f2",
+  "#e8c3f0",
+  "#bce6a8",
+  "#f0cf9e",
+  "#9fc6d8",
+  "#d8b8e8",
+  "#c3d9a0",
+];
 const probesPerPage = 50;
+export const targetLimit = 12;
 // Used only when the browser lacks Intl.supportedValuesOf("timeZone").
 const commonTimeZones = [
   "UTC",
@@ -131,6 +150,14 @@ const time = (value: string | Date, timeZone = defaultTimeZone) =>
     minute: "2-digit",
     hour12: false,
   }).format(new Date(value));
+// Renders a picked calendar date (YYYY-MM-DD) without shifting it into the
+// dashboard time zone: the custom-range label shows what the user chose.
+const calendarDate = (isoDate: string) =>
+  new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "2-digit",
+    month: "short",
+  }).format(new Date(`${isoDate}T00:00:00Z`));
 const format = (value: number | null | undefined, digits = 1) =>
   value == null ? "—" : value.toFixed(digits);
 const busyRun = (run?: Run) =>
@@ -232,6 +259,18 @@ export default function App() {
   const [source, setSource] = useState<"pingpe" | "globalping">("pingpe");
   const [metric, setMetric] = useState<"avg" | "loss" | "jitter">("avg");
   const [days, setDays] = useState("7");
+  // Custom date-range window; applies when both dates are filled and ordered.
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const customWindow =
+    customFrom && customTo && Date.parse(customFrom) <= Date.parse(customTo)
+      ? {
+          from: Date.parse(customFrom),
+          to: Date.parse(customTo) + 86_399_999,
+        }
+      : null;
+  // A window is either the rolling preset (24H/7D/30D) or the custom range.
+  const observationWindow: ObservationWindow = customWindow ?? Number(days);
   const [query, setQuery] = useState("");
   const [probePage, setProbePage] = useState(0);
   const [tableSort, setTableSort] = useState<{
@@ -261,6 +300,9 @@ export default function App() {
   const sourceLabel = source === "globalping" ? "Globalping" : "Ping.pe";
   const tz = data?.settings.timezone ?? data?.timezone ?? defaultTimeZone;
   const tzOffset = timeZoneOffsetLabel(tz, clock);
+  const windowLabel = customWindow
+    ? `${calendarDate(customFrom)} → ${calendarDate(customTo)}`
+    : `${days}D`;
   const configuredCountry = data?.settings.country ?? "TH";
   const countryLabel = countryName(configuredCountry);
   const ignored = data?.settings.ignoredNetworks ?? [];
@@ -383,7 +425,7 @@ export default function App() {
   const run = data?.runs.find((r) => r.id === selectedId) ?? data?.runs[0];
   const averaging = !selectedId;
   const targets =
-    averaging && data?.settings.targets.length === 3
+    averaging && data?.settings.targets.length
       ? data.settings.targets
       : (run?.targets ?? data?.settings.targets ?? []);
   const aggregate = useMemo(
@@ -392,7 +434,7 @@ export default function App() {
         data?.runs ?? [],
         targets,
         source,
-        Number(days),
+        observationWindow,
         clock.getTime(),
         (p) => inRegion(p, activeRegion, configuredCountry),
         ignored,
@@ -401,7 +443,7 @@ export default function App() {
       data,
       targets,
       source,
-      days,
+      observationWindow,
       clock,
       activeRegion,
       configuredCountry,
@@ -425,19 +467,33 @@ export default function App() {
       );
   const hasComparison =
     shared.size > 0 && summaries.every((s) => s[metric] !== null);
-  const best = hasComparison
-    ? summaries.reduce(
-        (index, s, i) => (s[metric]! < summaries[index][metric]! ? i : index),
-        0,
-      )
-    : -1;
+  // With a single target there is nothing to compare, so no winner is crowned.
+  const best =
+    hasComparison && targets.length > 1
+      ? summaries.reduce(
+          (index, s, i) => (s[metric]! < summaries[index][metric]! ? i : index),
+          0,
+        )
+      : -1;
   const comparisonCount = summaries[0]?.reporting ?? 0;
   const chartData = (data?.runs ?? [])
-    .filter(
-      (r) =>
+    .filter((r) => {
+      const started = Date.parse(r.startedAt);
+      const since =
+        typeof observationWindow === "number"
+          ? Date.now() - observationWindow * 86400_000
+          : observationWindow.from;
+      const until =
+        typeof observationWindow === "number"
+          ? Date.now()
+          : observationWindow.to;
+      return (
         !busyRun(r) &&
-        Date.now() - Date.parse(r.startedAt) < Number(days) * 86400_000,
-    )
+        Number.isFinite(started) &&
+        started >= since &&
+        started <= until
+      );
+    })
     .slice()
     .reverse()
     .map((r) => {
@@ -614,7 +670,7 @@ export default function App() {
         p.location,
         p.provider,
         averaging ? "average" : "individual",
-        averaging ? days : "",
+        averaging ? (customWindow ? `${customFrom}→${customTo}` : days) : "",
         averaging ? aggregate.testCount : 1,
         ...targets.flatMap((t) => {
           const result = results.find((r) => r.targetId === t.id);
@@ -782,7 +838,7 @@ export default function App() {
               </h1>
               <p>
                 {page === "overview"
-                  ? "Three targets. Your observation schedule. One source of truth."
+                  ? "Any number of targets. Your observation schedule. One source of truth."
                   : countryOnly
                     ? `Latency and packet loss from ${sourceLabel} probes located in ${countryLabel}.`
                     : page === "evidence"
@@ -822,7 +878,7 @@ export default function App() {
                   pending ||
                   clearingHistory ||
                   Boolean(active) ||
-                  (!demo && targets.length !== 3)
+                  (!demo && !targets.length)
                 }
                 onClick={runNow}
               >
@@ -905,7 +961,7 @@ export default function App() {
                 className="button primary"
                 onClick={() => setSettingsOpen(true)}
               >
-                Configure three targets <ArrowRight size={15} />
+                Configure targets <ArrowRight size={15} />
               </button>
             </div>
           ) : (
@@ -918,7 +974,7 @@ export default function App() {
                       <span className="muted">
                         /{" "}
                         {averaging
-                          ? `${days}D average · ${aggregate.testCount} tests${data.detailLimit && aggregate.testCount >= data.detailLimit ? " (latest)" : ""}`
+                          ? `${windowLabel} average · ${aggregate.testCount} tests${data.detailLimit && aggregate.testCount >= data.detailLimit ? " (latest)" : ""}`
                           : run
                             ? `${date(run.startedAt, true, tz)} ${tzOffset}`
                             : "Awaiting first run"}
@@ -937,7 +993,9 @@ export default function App() {
                             value={selectedId}
                             onChange={(e) => setSelectedId(e.target.value)}
                           >
-                            <option value="">Average of tests · {days}D</option>
+                            <option value="">
+                              Average of tests · {windowLabel}
+                            </option>
                             {data.runs.map((r) => (
                               <option key={r.id} value={r.id}>
                                 {date(r.startedAt, true, tz)} {tzOffset}
@@ -1022,19 +1080,44 @@ export default function App() {
                           </h2>
                         </div>
                         <div className="segmented">
-                          {["7", "30"].map((n) => (
+                          {["1", "7", "30"].map((n) => (
                             <button
                               key={n}
-                              className={days === n ? "active" : ""}
+                              className={
+                                !customWindow && days === n ? "active" : ""
+                              }
                               onClick={() => {
                                 setDays(n);
+                                setCustomFrom("");
+                                setCustomTo("");
                                 setSelectedId("");
                               }}
                             >
-                              {n}D
+                              {n === "1" ? "24H" : `${n}D`}
                             </button>
                           ))}
                         </div>
+                        <label className="date-range" title="Custom date range">
+                          <input
+                            type="date"
+                            aria-label="Range start date"
+                            value={customFrom}
+                            onChange={(e) => {
+                              setCustomFrom(e.target.value);
+                              setSelectedId("");
+                            }}
+                          />
+                          <span>→</span>
+                          <input
+                            type="date"
+                            aria-label="Range end date"
+                            value={customTo}
+                            onChange={(e) => {
+                              setCustomTo(e.target.value);
+                              setSelectedId("");
+                            }}
+                          />
+                        </label>
                       </div>
                       <div className="chart-controls">
                         <div className="metric-tabs">
@@ -1244,7 +1327,7 @@ export default function App() {
                       </div>
                       <p className="method-note">
                         <ShieldCheck size={14} /> Averages use the same
-                        reporting probes across all three targets.
+                        reporting probes across every configured target.
                       </p>
                     </section>
                   </div>
@@ -1455,7 +1538,7 @@ export default function App() {
                           : "probes"}{" "}
                         ·{" "}
                         {averaging
-                          ? `${aggregate.testCount} tests · ${days}D average`
+                          ? `${aggregate.testCount} tests · ${windowLabel} average`
                           : (run?.status ?? "No run")}
                         {tableProbes.length > probesPerPage
                           ? " · Export CSV for all rows"
@@ -1551,13 +1634,13 @@ export default function App() {
                               {r.source === "scheduled"
                                 ? "Scheduled observation"
                                 : "On-demand observation"}{" "}
-                              · {r.resultsCount ?? r.results.length}/3 targets
-                              captured
+                              · {r.resultsCount ?? r.results.length}/
+                              {r.targets.length} targets captured
                               {" · "}
                               {r.globalpingCount ??
                                 r.globalpingResults?.length ??
                                 0}
-                              /3 Globalping measurements
+                              /{r.targets.length} Globalping measurements
                             </small>
                             {r.error && (
                               <small className="lossy">{r.error}</small>
@@ -1672,8 +1755,8 @@ export default function App() {
           <div className="clear-history-content">
             <p className="modal-description">
               Removes all saved runs and their PNG, PDF, and JSON evidence from
-              both the global and country views. Your three targets and schedule
-              are kept.
+              both the global and country views. Your targets and schedule are
+              kept.
             </p>
             <div className="modal-actions">
               <button
@@ -2008,12 +2091,13 @@ function SettingsModal({
   onClose: () => void;
   onSave: (s: Settings) => Promise<void>;
 }) {
-  const [targets, setTargets] = useState(
-    Array.from({ length: 3 }, (_, i) => ({
-      name: settings.targets[i]?.name ?? "",
-      url: settings.targets[i]?.url ?? "",
-    })),
-  );
+  const [targets, setTargets] = useState(() => {
+    const rows = settings.targets.map((target) => ({
+      name: target.name,
+      url: target.url,
+    }));
+    return rows.length ? rows : [{ name: "", url: "" }];
+  });
   const [enabled, setEnabled] = useState(settings.enabled);
   const [seconds, setSeconds] = useState(settings.sampleSeconds);
   const [cadence, setCadence] = useState<ObservationCadence>(
@@ -2076,15 +2160,28 @@ function SettingsModal({
         }}
       >
         <p className="modal-description">
-          Add three different hostnames. Ping.pe measures ICMP network latency;
-          paths and page-load speed are not tested.
+          Add up to {targetLimit} different hostnames. Ping.pe measures ICMP
+          network latency; paths and page-load speed are not tested.
         </p>
         <div className="target-fields">
           {targets.map((target, i) => (
             <fieldset key={i}>
               <legend>
-                <i style={{ background: colors[i] }} />
-                TARGET {String.fromCharCode(65 + i)}
+                <i style={{ background: colors[i % colors.length] }} />
+                TARGET {String.fromCharCode(65 + (i % 26))}
+                {targets.length > 1 && (
+                  <button
+                    type="button"
+                    className="target-remove"
+                    aria-label={`Remove target ${target.name || i + 1}`}
+                    title="Remove this target"
+                    onClick={() =>
+                      setTargets((old) => old.filter((_, j) => j !== i))
+                    }
+                  >
+                    <X size={13} />
+                  </button>
+                )}
               </legend>
               <div className="target-field-row">
                 <label>
@@ -2122,6 +2219,17 @@ function SettingsModal({
               </div>
             </fieldset>
           ))}
+          <button
+            type="button"
+            className="button secondary add-target"
+            disabled={targets.length >= targetLimit}
+            onClick={() => setTargets((old) => [...old, { name: "", url: "" }])}
+          >
+            <ArrowRight className="add-target-icon" size={14} />
+            {targets.length >= targetLimit
+              ? `Maximum ${targetLimit} targets`
+              : "Add target"}
+          </button>
         </div>
         <div className="settings-section">
           <div>
@@ -2208,8 +2316,10 @@ function SettingsModal({
             <p>
               {times.length}{" "}
               {times.length === 1 ? "observation" : "observations"}/day · up to{" "}
-              {(times.length * 3 * limit).toLocaleString("en-US")} Globalping
-              tests/day when enabled.
+              {(times.length * targets.length * limit).toLocaleString("en-US")}{" "}
+              Globalping tests/day when enabled · about{" "}
+              {Math.round((targets.length * (seconds + 45)) / 60)} min per
+              observation.
             </p>
           </div>
         </div>
@@ -2270,11 +2380,11 @@ function SettingsModal({
         <p className="settings-note">
           Targets are observed sequentially with Ping.pe, followed by Globalping
           ping measurements using up to {limit} {countryName(country)} probes
-          and 10 packets per target. Globalping uses up to {3 * limit}{" "}
-          probe-tests per run; repeated manual runs can reach the
-          unauthenticated 250 tests/hour allowance. The observation window
-          controls Ping.pe only. Scheduled runs start a few minutes past the
-          hour, alternating :05 and :10 between consecutive slots, so
+          and 10 packets per target. Globalping uses up to{" "}
+          {targets.length * limit} probe-tests per run; repeated manual runs can
+          reach the unauthenticated 250 tests/hour allowance. The observation
+          window controls Ping.pe only. Scheduled runs start a few minutes past
+          the hour, alternating :05 and :10 between consecutive slots, so
           back-to-back Globalping runs never share one rate-limit minute. Saving
           a schedule takes effect at its next matching slot. Overlapping
           observations are skipped.
