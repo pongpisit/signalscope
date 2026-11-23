@@ -661,9 +661,13 @@ test("history deletes one observation after confirmation and keeps the rest", as
 test("older observations load their results on demand", async ({ page }) => {
   await page.clock.setFixedTime(new Date("2026-11-23T05:00:00Z"));
   const fixture = demoDashboard(new Date("2026-11-23T05:00:00Z"));
-  // The fourth run travels as metadata with counts only.
+  // The fourth run travels as metadata with counts only, and sits outside
+  // the rolling 7-day window so only explicit selection fetches it.
   const metadata = fixture.runs[3];
   const full = structuredClone(metadata);
+  metadata.startedAt = new Date(
+    Date.parse(metadata.startedAt) - 10 * 86400_000,
+  ).toISOString();
   metadata.results = [];
   metadata.globalpingResults = [];
   metadata.resultsCount = 3;
@@ -676,13 +680,21 @@ test("older observations load their results on demand", async ({ page }) => {
     route.fulfill({ json: fixture }),
   );
   await page.route("**/api/runs/*", async (route) => {
-    expect(route.request().method()).toBe("GET");
+    const method = route.request().method();
+    if (method === "POST") {
+      // The range loader batches through POST /api/runs/detail; nothing is
+      // in its window here, so answer with an empty batch.
+      await route.fulfill({ json: { runs: [] } });
+      return;
+    }
+    expect(method).toBe("GET");
     detailRequests++;
     await route.fulfill({ json: full });
   });
   await page.goto("/#country");
   // The metadata run does not join the rolling average: of the fixture's 14
-  // runs, one is outside the 7-day window at this instant and one is masked.
+  // runs, one is still in the future relative to the frozen clock and one is
+  // shifted out of the window.
   await expect(page.locator(".section-title")).toContainText(
     "7D average · 12 tests",
   );
@@ -793,6 +805,63 @@ test("custom date range narrows the averaging window", async ({ page }) => {
   await page.getByRole("button", { name: "7D", exact: true }).click();
   await expect(page.locator(".section-title")).toContainText("7D average ·");
   await expect(page.locator(".section-title")).not.toContainText("18 Nov");
+});
+test("custom ranges stream older observations' results in batches", async ({
+  page,
+}) => {
+  await page.clock.setFixedTime(new Date("2026-11-23T05:00:00Z"));
+  const fixture = demoDashboard(new Date("2026-11-23T05:00:00Z"));
+  // Every run older than the newest three arrives as metadata; the range
+  // loader must fetch their results through the batch endpoint.
+  const full = structuredClone(fixture.runs);
+  const metadataIds = fixture.runs.slice(3).map((run) => run.id);
+  for (const [index, run] of fixture.runs.entries()) {
+    if (index >= 3) {
+      // Metadata runs sit outside the rolling 7D window; only a custom
+      // range reaches them, so only that range triggers batch loading.
+      run.startedAt = new Date(
+        Date.parse(run.startedAt) - 10 * 86400_000,
+      ).toISOString();
+      run.results = [];
+      run.resultsCount = 3;
+      run.globalpingCount = 0;
+    }
+  }
+  const requestedBatches: string[][] = [];
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { configured: true, authenticated: true } }),
+  );
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({ json: fixture }),
+  );
+  await page.route("**/api/runs/detail", async (route) => {
+    const body = route.request().postDataJSON();
+    requestedBatches.push(body.ids);
+    await route.fulfill({
+      json: {
+        runs: body.ids.map((id: string) => full.find((run) => run.id === id)),
+      },
+    });
+  });
+  await page.goto("/");
+  // Default 7D window: only the in-window detailed runs join the average.
+  await expect(page.locator(".section-title")).toContainText(
+    "7D average · 2 tests",
+  );
+  expect(requestedBatches).toEqual([]);
+  // A range that reaches the metadata runs streams their results in.
+  await page.getByLabel("Range start date").fill("2026-11-06");
+  await page.getByLabel("Range end date").fill("2026-11-23");
+  await expect(page.locator(".section-title")).toContainText(
+    "6 Nov → 23 Nov average · 14 tests",
+  );
+  await expect(page.locator("tbody tr").first()).toContainText(
+    "China, Beijing",
+  );
+  await expect(page.locator("tbody tr").first()).toContainText("14 tests");
+  // All batches together covered every metadata run, newest-first.
+  expect(requestedBatches.flat().sort()).toEqual(metadataIds.sort());
+  expect(requestedBatches.length).toBeGreaterThanOrEqual(1);
 });
 test("the capture parser keeps missing samples null and freezes canvas evidence", async ({
   page,

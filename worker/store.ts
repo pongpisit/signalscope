@@ -194,6 +194,52 @@ export async function getRun(env: Env, id: string): Promise<Run | null> {
   };
 }
 
+// Batched form of getRun for the dashboard's range loader. Each request is
+// bounded so a single D1 query and response stay far below the size limits.
+export const detailBatchLimit = 40;
+export async function getRuns(
+  env: Env,
+  ids: readonly string[],
+): Promise<Run[]> {
+  if (!ids.length) return [];
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await env.DB.prepare(
+    `SELECT * FROM runs WHERE id IN (${placeholders}) ORDER BY started_at DESC`,
+  )
+    .bind(...ids)
+    .all<RunRow>();
+  if (!rows.results.length) return [];
+  const results = await env.DB.prepare(
+    `SELECT run_id, value FROM results WHERE run_id IN (${placeholders})`,
+  )
+    .bind(...ids)
+    .all<{ run_id: string; value: string }>();
+  const byRun = new Map<string, Result[]>();
+  for (const row of results.results) {
+    const values = byRun.get(row.run_id) ?? [];
+    values.push(JSON.parse(row.value) as Result);
+    byRun.set(row.run_id, values);
+  }
+  return rows.results.map((row) => {
+    const values = byRun.get(row.id) ?? [];
+    return {
+      id: row.id,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      source: row.source,
+      status: row.status,
+      targets: JSON.parse(row.targets),
+      country: row.country ?? undefined,
+      timezone: row.timezone ?? undefined,
+      resultsCount: values.filter((r) => r.source !== "globalping").length,
+      globalpingCount: values.filter((r) => r.source === "globalping").length,
+      error: row.error ?? undefined,
+      results: values.filter((r) => r.source !== "globalping"),
+      globalpingResults: values.filter((r) => r.source === "globalping"),
+    };
+  });
+}
+
 export async function reconcileActive(env: Env) {
   const row = await env.DB.prepare(
     "SELECT id, started_at FROM runs WHERE status IN ('queued', 'running')",

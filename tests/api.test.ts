@@ -136,6 +136,9 @@ describe("local Worker API with real D1", () => {
     expect((await request("/history", "DELETE")).status).toBe(401);
     expect((await request("/runs/some-run", "DELETE")).status).toBe(401);
     expect((await request("/runs/some-run")).status).toBe(401);
+    expect((await request("/runs/detail", "POST", { ids: ["x"] })).status).toBe(
+      401,
+    );
   });
   it("rejects cross-origin login and incorrect credentials", async () => {
     expect(
@@ -692,6 +695,91 @@ describe("local Worker API with real D1", () => {
         ),
         platform.env.DB.prepare(
           "DELETE FROM runs WHERE id LIKE 'bound-fixture-%'",
+        ),
+      ]);
+    }
+  });
+  it("serves older runs' full results in bounded batches", async () => {
+    const result = JSON.stringify({
+      targetId: "target-1",
+      targetName: "Test",
+      hostname: "target-1.example",
+      status: "complete",
+      capturedAt: "2026-10-20T05:06:00.000Z",
+      sourceUrl: "https://ping.pe/target-1.example",
+      probes: [
+        {
+          id: "TH_1",
+          location: "Thailand, Bangkok",
+          provider: "Test network (AS123)",
+          sent: 10,
+          loss: 0,
+          avg: 12,
+          best: 10,
+          worst: 14,
+          jitter: 1,
+        },
+      ],
+      evidence: [],
+    });
+    await platform.env.DB.batch([
+      platform.env.DB.prepare(
+        "INSERT INTO runs (id, started_at, completed_at, source, status, targets) VALUES ('detail-fixture-a', '2026-10-20T05:00:00.000Z', '2026-10-20T05:06:00.000Z', 'scheduled', 'complete', '[]')",
+      ),
+      platform.env.DB.prepare(
+        "INSERT INTO runs (id, started_at, completed_at, source, status, targets) VALUES ('detail-fixture-b', '2026-10-20T09:00:00.000Z', '2026-10-20T09:06:00.000Z', 'scheduled', 'complete', '[]')",
+      ),
+      platform.env.DB.prepare(
+        "INSERT INTO results (run_id, target_id, value) VALUES ('detail-fixture-a', 'target-1', ?)",
+      ).bind(result),
+      platform.env.DB.prepare(
+        "INSERT INTO results (run_id, target_id, value) VALUES ('detail-fixture-b', 'target-1', ?)",
+      ).bind(result),
+    ]);
+    try {
+      // The range loader batches up to 40 IDs; validation keeps each response
+      // in the few-megabyte range the dashboard can merge progressively.
+      for (const [ids, status] of [
+        ["nope", 400],
+        [[], 400],
+        [["bad id!"], 400],
+        [Array.from({ length: 41 }, (_, i) => `x-${i}`), 400],
+      ] as const) {
+        const response = await request("/runs/detail", "POST", { ids });
+        expect(response.status).toBe(status);
+      }
+      expect(
+        (
+          await request(
+            "/runs/detail",
+            "POST",
+            { ids: ["detail-fixture-a"] },
+            "https://elsewhere.example",
+          )
+        ).status,
+      ).toBe(403);
+      const body = await request("/runs/detail", "POST", {
+        ids: ["detail-fixture-a", "detail-fixture-b", "never-existed"],
+      });
+      expect(body.status).toBe(200);
+      const { runs } = (await body.json()) as { runs: Run[] };
+      expect(runs).toHaveLength(2);
+      for (const run of runs) {
+        expect(run.results[0].hostname).toBe("target-1.example");
+        expect(run.results[0].probes).toHaveLength(1);
+        expect(run.resultsCount).toBe(1);
+      }
+      expect(runs.map((r) => r.id).sort()).toEqual([
+        "detail-fixture-a",
+        "detail-fixture-b",
+      ]);
+    } finally {
+      await platform.env.DB.batch([
+        platform.env.DB.prepare(
+          "DELETE FROM results WHERE run_id LIKE 'detail-fixture-%'",
+        ),
+        platform.env.DB.prepare(
+          "DELETE FROM runs WHERE id LIKE 'detail-fixture-%'",
         ),
       ]);
     }

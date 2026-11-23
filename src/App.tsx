@@ -306,6 +306,8 @@ export default function App() {
     new Map<string, Pick<Run, "results" | "globalpingResults">>(),
   );
   const pendingDetail = useRef(new Set<string>());
+  // Range loader: batches older runs' results into the current window.
+  const windowLoadToken = useRef(0);
   const [viewer, setViewer] = useState<{ run: Run; result: Result } | null>(
     null,
   );
@@ -425,6 +427,115 @@ export default function App() {
   useEffect(() => {
     if (selectedId) void ensureRunDetail(selectedId);
   }, [selectedId, ensureRunDetail]);
+
+  // Averages can only use runs whose full results are loaded, so a window
+  // reaching beyond the newest detailed runs streams the rest in batches.
+  // Runs are immutable once finished; each batch merges into the shared cache
+  // and the aggregate recomputes progressively. Sessions cap the fetch so a
+  // 30-day hourly window loads only the newest slice and says "(latest)".
+  const windowDetailBatch = 40;
+  const windowDetailCap = 360;
+  const windowMissing = useMemo(() => {
+    if (demo || !data) return [] as Run[];
+    const since =
+      typeof observationWindow === "number"
+        ? clock.getTime() - observationWindow * 86400_000
+        : observationWindow.from;
+    const until =
+      typeof observationWindow === "number"
+        ? clock.getTime()
+        : observationWindow.to;
+    return data.runs.filter((run) => {
+      const started = Date.parse(run.startedAt);
+      if (
+        busyRun(run) ||
+        !Number.isFinite(started) ||
+        started < since ||
+        started > until
+      )
+        return false;
+      const expected = (run.resultsCount ?? 0) + (run.globalpingCount ?? 0);
+      const loaded = run.results.length + (run.globalpingResults?.length ?? 0);
+      return (
+        expected > 0 && expected > loaded && !detailRuns.current.has(run.id)
+      );
+    });
+  }, [data, observationWindow, clock, demo]);
+  const [windowSession, setWindowSession] = useState<{
+    loaded: number;
+    total: number;
+    capped: boolean;
+  } | null>(null);
+  const windowLoad = useRef<{
+    key: string;
+    remaining: string[];
+    total: number;
+    capped: boolean;
+    token: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!windowMissing.length) {
+      windowLoad.current = null;
+      setWindowSession(null);
+      return;
+    }
+    const key = JSON.stringify(observationWindow);
+    let session = windowLoad.current;
+    if (!session || session.key !== key) {
+      const capped = windowMissing.length > windowDetailCap;
+      // data.runs is newest-first, so this is the newest slice of the window.
+      session = {
+        key,
+        remaining: windowMissing.slice(0, windowDetailCap).map((run) => run.id),
+        total: Math.min(windowMissing.length, windowDetailCap),
+        capped,
+        token: ++windowLoadToken.current,
+      };
+      windowLoad.current = session;
+      setWindowSession({ loaded: 0, total: session.total, capped });
+    }
+    if (!session.remaining.length) return;
+    const batch = session.remaining.splice(0, windowDetailBatch);
+    const token = session.token;
+    (async () => {
+      try {
+        const response = await api<{ runs: Run[] }>("/runs/detail", "POST", {
+          ids: batch,
+        });
+        if (token !== windowLoadToken.current || !windowLoad.current) return;
+        for (const run of response.runs)
+          detailRuns.current.set(run.id, {
+            results: run.results,
+            globalpingResults: run.globalpingResults ?? [],
+          });
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                runs: current.runs.map((run) => {
+                  const detail = detailRuns.current.get(run.id);
+                  return detail ? { ...run, ...detail } : run;
+                }),
+              }
+            : current,
+        );
+        const stored = windowLoad.current;
+        setWindowSession(
+          stored
+            ? {
+                loaded: stored.total - stored.remaining.length,
+                total: stored.total,
+                capped: stored.capped,
+              }
+            : null,
+        );
+      } catch (e) {
+        if (token === windowLoadToken.current) setError((e as Error).message);
+      }
+    })();
+    // The effect re-fires after each merge (data changes) and drains the
+    // next batch of the same session.
+  }, [windowMissing]);
 
   const preview = () => {
     setDemo(true);
@@ -994,7 +1105,7 @@ export default function App() {
                       <span className="muted">
                         /{" "}
                         {averaging
-                          ? `${windowLabel} average · ${aggregate.testCount} tests${data.detailLimit && aggregate.testCount >= data.detailLimit ? " (latest)" : ""}`
+                          ? `${windowLabel} average · ${aggregate.testCount} tests${(data.detailLimit && aggregate.testCount >= data.detailLimit) || (windowSession?.capped && windowSession.loaded >= windowSession.total) ? " (latest)" : ""}${windowSession && windowSession.loaded < windowSession.total ? ` · loading ${windowSession.loaded}/${windowSession.total} older runs…` : ""}`
                           : run
                             ? `${date(run.startedAt, true, tz)} ${tzOffset}`
                             : "Awaiting first run"}

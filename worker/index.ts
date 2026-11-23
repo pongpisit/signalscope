@@ -9,7 +9,9 @@ import {
   defaultSettings,
   deleteRun,
   detailedRunsLimit,
+  detailBatchLimit,
   getRun,
+  getRuns,
   listRuns,
   normalizeCountry,
   normalizeGlobalpingLimit,
@@ -262,6 +264,24 @@ async function api(request: Request, env: Env): Promise<Response> {
     const run = await getRun(env, runToDelete[1]);
     if (!run) return json({ error: "This observation does not exist." }, 404);
     return json(run);
+  }
+  if (path === "/api/runs/detail" && request.method === "POST") {
+    // The dashboard's date-range loader pulls older runs' full results in
+    // bounded batches. Response size stays a few megabytes per request.
+    if (Number(request.headers.get("Content-Length") ?? 0) > 10_000)
+      return json({ error: "Request too large." }, 413);
+    const body = await request.json<{ ids?: unknown }>();
+    if (
+      !Array.isArray(body.ids) ||
+      body.ids.length < 1 ||
+      body.ids.length > detailBatchLimit ||
+      body.ids.some((id) => typeof id !== "string" || !/^[\w-]+$/.test(id))
+    )
+      return json(
+        { error: `Request between 1 and ${detailBatchLimit} observation IDs.` },
+        400,
+      );
+    return json({ runs: await getRuns(env, body.ids as string[]) });
   }
   const evidence = path.match(
     /^\/api\/evidence\/([\w-]+)\/(target-\d+)\/(png|pdf|json)$/,
