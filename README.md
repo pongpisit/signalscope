@@ -112,7 +112,7 @@ Evidence is streamed from private R2 through authenticated endpoints. Login uses
 
 A D1 unique index allows one queued/running observation at a time. Scheduled run IDs are deterministic to avoid duplicate cron delivery. Workflow steps durably store each target result. Capture steps are not automatically retried to avoid silently generating a different observation as though it were the original; the only retry is browser startup, which measures nothing. Run history reconciles interrupted workflows so a terminal failure does not permanently block later observations.
 
-The dashboard loads every run in the last 30 days, plus the latest 60 runs for individual history inspection when observations are infrequent. Extra manual tests do not truncate the average window. Older D1 records and R2 evidence remain stored; no automatic evidence deletion is configured.
+The dashboard loads metadata for every run in the last 30 days, plus the latest 60 runs when observations are infrequent, and ships full probe results for the newest 168 runs (one week of hourly tests). Older runs travel with result counts only and load their full results on demand — automatically when you select them in the observation picker, history, or evidence library — so a month of accumulated probes can never exceed D1's per-query response limit. The rolling averages cover the newest 168 loaded tests and label the count; inspecting any older run still shows its complete data. Extra manual tests do not truncate the loaded window. Older D1 records and R2 evidence remain stored; no automatic evidence deletion is configured.
 
 ## Local development
 

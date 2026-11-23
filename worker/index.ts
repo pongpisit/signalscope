@@ -8,6 +8,8 @@ import {
   clearHistory,
   defaultSettings,
   deleteRun,
+  detailedRunsLimit,
+  getRun,
   listRuns,
   normalizeCountry,
   normalizeGlobalpingLimit,
@@ -104,6 +106,7 @@ async function api(request: Request, env: Env): Promise<Response> {
       runs: await listRuns(env),
       timezone: config.timezone ?? defaultSettings.timezone,
       schedule: scheduleTimes(config.cadence),
+      detailLimit: detailedRunsLimit,
     });
   }
   if (path === "/api/settings" && request.method === "PUT") {
@@ -251,6 +254,13 @@ async function api(request: Request, env: Env): Promise<Response> {
       runId: runToDelete[1],
       deletedFiles: result.deletedFiles,
     });
+  }
+  if (runToDelete && request.method === "GET") {
+    // Older runs travel as metadata in the dashboard payload; this endpoint
+    // restores their full results on demand.
+    const run = await getRun(env, runToDelete[1]);
+    if (!run) return json({ error: "This observation does not exist." }, 404);
+    return json(run);
   }
   const evidence = path.match(
     /^\/api\/evidence\/([\w-]+)\/(target-[123])\/(png|pdf|json)$/,

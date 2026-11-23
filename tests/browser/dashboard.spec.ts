@@ -658,6 +658,49 @@ test("history deletes one observation after confirmation and keeps the rest", as
   await expect(deleteButtons).toHaveCount(12);
 });
 
+test("older observations load their results on demand", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-23T05:00:00Z"));
+  const fixture = demoDashboard(new Date("2026-11-23T05:00:00Z"));
+  // The fourth run travels as metadata with counts only.
+  const metadata = fixture.runs[3];
+  const full = structuredClone(metadata);
+  metadata.results = [];
+  metadata.globalpingResults = [];
+  metadata.resultsCount = 3;
+  metadata.globalpingCount = 0;
+  let detailRequests = 0;
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { configured: true, authenticated: true } }),
+  );
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({ json: fixture }),
+  );
+  await page.route("**/api/runs/*", async (route) => {
+    expect(route.request().method()).toBe("GET");
+    detailRequests++;
+    await route.fulfill({ json: full });
+  });
+  await page.goto("/#country");
+  // The metadata run does not join the rolling average: of the fixture's 14
+  // runs, one is outside the 7-day window at this instant and one is masked.
+  await expect(page.locator(".section-title")).toContainText(
+    "7D average · 12 tests",
+  );
+  await page.getByLabel("Country observation").selectOption(metadata.id);
+  await expect(page.locator("tbody tr").first()).toContainText(
+    "Thailand, Bangkok",
+  );
+  expect(detailRequests).toBe(1);
+  // The evidence library resolves the same run from the shared cache without
+  // issuing another request.
+  await page
+    .getByRole("button", { name: "Evidence library", exact: true })
+    .click();
+  await page.getByLabel("Evidence run").selectOption(metadata.id);
+  await expect(page.locator(".evidence-card")).toHaveCount(3);
+  expect(detailRequests).toBe(1);
+});
+
 test("the capture parser keeps missing samples null and freezes canvas evidence", async ({
   page,
 }) => {

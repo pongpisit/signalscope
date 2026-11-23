@@ -70,6 +70,10 @@ export type Run = {
   // configuration later never repaints earlier observations.
   country?: string;
   timezone?: string;
+  // Result counts for runs whose full results are not loaded in the
+  // dashboard payload; results arrive on demand via GET /api/runs/:id.
+  resultsCount?: number;
+  globalpingCount?: number;
   results: Result[];
   globalpingResults?: Result[];
   error?: string;
@@ -87,4 +91,6 @@ export type Dashboard = {
   runs: Run[];
   timezone: string;
   schedule: string[];
+  // How many of the newest runs carry full results in this payload.
+  detailLimit?: number;
 };

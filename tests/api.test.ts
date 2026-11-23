@@ -7,6 +7,7 @@ import {
   scheduleTimes,
   scheduledSlot,
 } from "../shared/schedule";
+import type { Run } from "../shared/types";
 import { dispatchScheduled } from "../worker/scheduler";
 
 let worker: Awaited<ReturnType<typeof unstable_dev>>;
@@ -44,10 +45,10 @@ beforeAll(async () => {
   await platform.env.DB.batch([
     platform.env.DB.prepare("DELETE FROM settings"),
     platform.env.DB.prepare(
-      "DELETE FROM results WHERE run_id LIKE 'clear-fixture-%' OR run_id = 'clear-active-fixture' OR run_id LIKE 'delete-fixture-%' OR run_id = 'delete-active'",
+      "DELETE FROM results WHERE run_id LIKE 'clear-fixture-%' OR run_id = 'clear-active-fixture' OR run_id LIKE 'delete-fixture-%' OR run_id = 'delete-active' OR run_id LIKE 'bound-fixture-%'",
     ),
     platform.env.DB.prepare(
-      "DELETE FROM runs WHERE id LIKE 'clear-fixture-%' OR id = 'clear-active-fixture' OR id LIKE 'delete-fixture-%' OR id = 'delete-active'",
+      "DELETE FROM runs WHERE id LIKE 'clear-fixture-%' OR id = 'clear-active-fixture' OR id LIKE 'delete-fixture-%' OR id = 'delete-active' OR id LIKE 'bound-fixture-%'",
     ),
   ]);
   await platform.env.DB.batch(
@@ -134,6 +135,7 @@ describe("local Worker API with real D1", () => {
     expect((await request("/evidence/no-run/target-1/png")).status).toBe(401);
     expect((await request("/history", "DELETE")).status).toBe(401);
     expect((await request("/runs/some-run", "DELETE")).status).toBe(401);
+    expect((await request("/runs/some-run")).status).toBe(401);
   });
   it("rejects cross-origin login and incorrect credentials", async () => {
     expect(
@@ -560,6 +562,93 @@ describe("local Worker API with real D1", () => {
         "delete-fixture-a/target-1/evidence.png",
         "delete-fixture-a/target-1/evidence.json",
         "delete-fixture-b/target-1/evidence.png",
+      ]);
+    }
+  });
+  it("ships full results for only the newest runs and serves older detail on demand", async () => {
+    const now = Date.now();
+    const result = JSON.stringify({
+      targetId: "target-1",
+      targetName: "Test",
+      hostname: "target-1.example",
+      status: "complete",
+      capturedAt: new Date(now).toISOString(),
+      sourceUrl: "https://ping.pe/target-1.example",
+      probes: [],
+      evidence: [],
+    });
+    await platform.env.DB.batch(
+      Array.from({ length: 170 }, (_, i) =>
+        platform.env.DB.prepare(
+          "INSERT INTO runs (id, started_at, completed_at, source, status, targets) VALUES (?, ?, ?, 'manual', 'complete', '[]')",
+        ).bind(
+          `bound-fixture-${i}`,
+          new Date(now - (169 - i) * 60_000).toISOString(),
+          new Date(now - (169 - i) * 60_000 + 30_000).toISOString(),
+        ),
+      ),
+    );
+    await platform.env.DB.batch(
+      Array.from({ length: 170 }, (_, i) =>
+        platform.env.DB.prepare(
+          "INSERT INTO results (run_id, target_id, value) VALUES (?, 'target-1', ?)",
+        ).bind(`bound-fixture-${i}`, result),
+      ),
+    );
+    // The oldest run also carries a Globalping result, pinning the count split.
+    await platform.env.DB.prepare(
+      "INSERT INTO results (run_id, target_id, value) VALUES (?, 'globalping-target-1', ?)",
+    )
+      .bind(
+        "bound-fixture-0",
+        JSON.stringify({ ...JSON.parse(result), source: "globalping" }),
+      )
+      .run();
+    try {
+      const dashboard = (await (await request("/dashboard")).json()) as {
+        runs: {
+          id: string;
+          results: unknown[];
+          resultsCount: number;
+          globalpingCount: number;
+        }[];
+        detailLimit: number;
+      };
+      expect(dashboard.detailLimit).toBe(168);
+      expect(dashboard.runs).toHaveLength(170);
+      // The two oldest runs travel as metadata with counts only.
+      const oldest = dashboard.runs.find((r) => r.id === "bound-fixture-0")!;
+      expect(oldest.results).toEqual([]);
+      expect(oldest.resultsCount).toBe(1);
+      expect(oldest.globalpingCount).toBe(1);
+      const second = dashboard.runs.find((r) => r.id === "bound-fixture-1")!;
+      expect(second.results).toEqual([]);
+      // The newest 168 runs keep their full results.
+      const newest = dashboard.runs[0];
+      expect(newest.id).toBe("bound-fixture-169");
+      expect(newest.results).toHaveLength(1);
+      expect(dashboard.runs[2].results).toHaveLength(1);
+      // The detail endpoint restores an older run on demand.
+      expect((await request("/runs/never-existed")).status).toBe(404);
+      const response = await request("/runs/bound-fixture-0");
+      expect(response.status).toBe(200);
+      const detail = (await response.json()) as Run;
+      expect(detail).toMatchObject({
+        id: "bound-fixture-0",
+        resultsCount: 1,
+        globalpingCount: 1,
+      });
+      expect(detail.results).toHaveLength(1);
+      expect(detail.results[0].hostname).toBe("target-1.example");
+      expect(detail.globalpingResults).toHaveLength(1);
+    } finally {
+      await platform.env.DB.batch([
+        platform.env.DB.prepare(
+          "DELETE FROM results WHERE run_id LIKE 'bound-fixture-%'",
+        ),
+        platform.env.DB.prepare(
+          "DELETE FROM runs WHERE id LIKE 'bound-fixture-%'",
+        ),
       ]);
     }
   });

@@ -246,6 +246,11 @@ export default function App() {
   const [deleteDialogRun, setDeleteDialogRun] = useState<Run | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
   const refreshVersion = useRef(0);
+  // Full results fetched on demand for runs the dashboard sent as metadata.
+  const detailRuns = useRef(
+    new Map<string, Pick<Run, "results" | "globalpingResults">>(),
+  );
+  const pendingDetail = useRef(new Set<string>());
   const [viewer, setViewer] = useState<{ run: Run; result: Result } | null>(
     null,
   );
@@ -289,6 +294,12 @@ export default function App() {
     try {
       const next = await api<Dashboard>("/dashboard");
       if (version !== refreshVersion.current) return;
+      // Keep full results already fetched on demand; the server sends older
+      // runs as metadata with counts.
+      next.runs = next.runs.map((run) => {
+        const detail = detailRuns.current.get(run.id);
+        return detail ? { ...run, ...detail } : run;
+      });
       setData(next);
       setError("");
     } catch (e) {
@@ -315,6 +326,47 @@ export default function App() {
     const timer = setTimeout(() => setNotice(""), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
+
+  // Older runs arrive as metadata; fetch their full results when inspected.
+  const ensureRunDetail = useCallback(
+    async (id: string) => {
+      if (!id || demo) return;
+      const run = data?.runs.find((r) => r.id === id);
+      if (!run || pendingDetail.current.has(id)) return;
+      // Runs are immutable once finished: one fetch is authoritative.
+      if (detailRuns.current.has(id)) return;
+      const expected = (run.resultsCount ?? 0) + (run.globalpingCount ?? 0);
+      const loaded = run.results.length + (run.globalpingResults?.length ?? 0);
+      if (expected <= loaded) return;
+      pendingDetail.current.add(id);
+      try {
+        const detail = await api<Run>(`/runs/${id}`);
+        const cached = {
+          results: detail.results,
+          globalpingResults: detail.globalpingResults ?? [],
+        };
+        detailRuns.current.set(id, cached);
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                runs: current.runs.map((r) =>
+                  r.id === id ? { ...r, ...cached } : r,
+                ),
+              }
+            : current,
+        );
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        pendingDetail.current.delete(id);
+      }
+    },
+    [data, demo],
+  );
+  useEffect(() => {
+    if (selectedId) void ensureRunDetail(selectedId);
+  }, [selectedId, ensureRunDetail]);
 
   const preview = () => {
     setDemo(true);
@@ -866,7 +918,7 @@ export default function App() {
                       <span className="muted">
                         /{" "}
                         {averaging
-                          ? `${days}D average · ${aggregate.testCount} tests`
+                          ? `${days}D average · ${aggregate.testCount} tests${data.detailLimit && aggregate.testCount >= data.detailLimit ? " (latest)" : ""}`
                           : run
                             ? `${date(run.startedAt, true, tz)} ${tzOffset}`
                             : "Awaiting first run"}
@@ -1465,6 +1517,7 @@ export default function App() {
                   source={source}
                   demo={demo}
                   onView={(r, v) => setViewer({ run: r, result: v })}
+                  onEnsureDetail={(id) => void ensureRunDetail(id)}
                 />
               )}
               {page === "history" && (
@@ -1498,10 +1551,13 @@ export default function App() {
                               {r.source === "scheduled"
                                 ? "Scheduled observation"
                                 : "On-demand observation"}{" "}
-                              · {r.results.length}/3 targets captured
+                              · {r.resultsCount ?? r.results.length}/3 targets
+                              captured
                               {" · "}
-                              {r.globalpingResults?.length ?? 0}/3 Globalping
-                              measurements
+                              {r.globalpingCount ??
+                                r.globalpingResults?.length ??
+                                0}
+                              /3 Globalping measurements
                             </small>
                             {r.error && (
                               <small className="lossy">{r.error}</small>
@@ -2247,17 +2303,26 @@ function EvidenceLibrary({
   source,
   demo,
   onView,
+  onEnsureDetail,
 }: {
   data: Dashboard;
   source: "pingpe" | "globalping";
   demo: boolean;
   onView: (run: Run, result: Result) => void;
+  onEnsureDetail: (id: string) => void;
 }) {
   const [selected, setSelected] = useState("");
-  const runs = data.runs.filter((r) => r.results.length);
+  const runs = data.runs.filter(
+    (run) =>
+      run.results.length + (run.globalpingResults?.length ?? 0) > 0 ||
+      (run.resultsCount ?? 0) + (run.globalpingCount ?? 0) > 0,
+  );
   const run = runs.find((r) => r.id === selected) ?? runs[0];
   const tz = data.timezone ?? defaultTimeZone;
   const tzOffset = timeZoneOffsetLabel(tz);
+  useEffect(() => {
+    if (run?.id) onEnsureDetail(run.id);
+  }, [run?.id, onEnsureDetail]);
   return (
     <>
       <div className="section-top">
@@ -2387,6 +2452,13 @@ function EvidenceLibrary({
           </article>
         ))}
       </div>
+      {run && !run.results.length && (
+        <div className="table-empty">
+          {(run.resultsCount ?? 0) + (run.globalpingCount ?? 0) > 0
+            ? "Loading this observation…"
+            : "This observation stored no evidence for the selected measurement source."}
+        </div>
+      )}
       {!run && (
         <div className="empty-state">
           <Layers3 size={38} />

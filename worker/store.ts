@@ -89,6 +89,13 @@ type RunRow = {
   country: string | null;
   timezone: string | null;
 };
+// The dashboard ships full probe results for only the newest runs. A month of
+// hourly tests carries far more probe data than D1 allows in one query
+// (50 MB response cap) or a browser can sanely poll; older runs travel as
+// metadata with counts and load their results on demand via GET /api/runs/:id.
+// 168 = one week of hourly tests, keeping the 7-day average complete.
+export const detailedRunsLimit = 168;
+
 export async function listRuns(env: Env): Promise<Run[]> {
   const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
   // Include every test in the longest comparison window, plus the latest 60
@@ -100,18 +107,77 @@ export async function listRuns(env: Env): Promise<Run[]> {
   )
     .bind(cutoff)
     .all<RunRow>();
-  const results = await env.DB.prepare(
-    `SELECT r.run_id, r.value FROM results r JOIN (${selection}) recent ON r.run_id = recent.id`,
-  )
-    .bind(cutoff)
-    .all<{ run_id: string; value: string }>();
+  // Result counts travel with every run; full values only with the newest.
+  const counts = new Map(
+    (
+      await env.DB.prepare(
+        `SELECT run_id, SUM(CASE WHEN target_id NOT LIKE 'globalping-%' THEN 1 ELSE 0 END) AS pingpe, SUM(CASE WHEN target_id LIKE 'globalping-%' THEN 1 ELSE 0 END) AS globalping FROM results WHERE run_id IN (${selection}) GROUP BY run_id`,
+      )
+        .bind(cutoff)
+        .all<{
+          run_id: string;
+          pingpe: number | null;
+          globalping: number | null;
+        }>()
+    ).results.map((row) => [row.run_id, row]),
+  );
+  const detailed = new Set(
+    (
+      await env.DB.prepare(
+        `SELECT id FROM runs WHERE id IN (${selection}) ORDER BY started_at DESC LIMIT ?`,
+      )
+        .bind(cutoff, detailedRunsLimit)
+        .all<{ id: string }>()
+    ).results.map((row) => row.id),
+  );
   const byRun = new Map<string, Result[]>();
-  for (const row of results.results) {
-    const values = byRun.get(row.run_id) ?? [];
-    values.push(JSON.parse(row.value) as Result);
-    byRun.set(row.run_id, values);
+  if (detailed.size) {
+    const results = await env.DB.prepare(
+      `SELECT r.run_id, r.value FROM results r JOIN (SELECT id FROM runs WHERE id IN (${selection}) ORDER BY started_at DESC LIMIT ?) detailed ON r.run_id = detailed.id`,
+    )
+      .bind(cutoff, detailedRunsLimit)
+      .all<{ run_id: string; value: string }>();
+    for (const row of results.results) {
+      const values = byRun.get(row.run_id) ?? [];
+      values.push(JSON.parse(row.value) as Result);
+      byRun.set(row.run_id, values);
+    }
   }
-  return rows.results.map((row) => ({
+  return rows.results.map((row) => {
+    const count = counts.get(row.id);
+    const values = detailed.has(row.id) ? (byRun.get(row.id) ?? []) : [];
+    return {
+      id: row.id,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      source: row.source,
+      status: row.status,
+      targets: JSON.parse(row.targets),
+      country: row.country ?? undefined,
+      timezone: row.timezone ?? undefined,
+      resultsCount: count?.pingpe ?? 0,
+      globalpingCount: count?.globalping ?? 0,
+      error: row.error ?? undefined,
+      results: values.filter((r) => r.source !== "globalping"),
+      globalpingResults: values.filter((r) => r.source === "globalping"),
+    };
+  });
+}
+
+export async function getRun(env: Env, id: string): Promise<Run | null> {
+  const row = await env.DB.prepare("SELECT * FROM runs WHERE id = ?")
+    .bind(id)
+    .first<RunRow>();
+  if (!row) return null;
+  const results = await env.DB.prepare(
+    "SELECT run_id, value FROM results WHERE run_id = ?",
+  )
+    .bind(id)
+    .all<{ run_id: string; value: string }>();
+  const values = results.results.map(
+    (result) => JSON.parse(result.value) as Result,
+  );
+  return {
     id: row.id,
     startedAt: row.started_at,
     completedAt: row.completed_at,
@@ -120,12 +186,12 @@ export async function listRuns(env: Env): Promise<Run[]> {
     targets: JSON.parse(row.targets),
     country: row.country ?? undefined,
     timezone: row.timezone ?? undefined,
+    resultsCount: values.filter((r) => r.source !== "globalping").length,
+    globalpingCount: values.filter((r) => r.source === "globalping").length,
     error: row.error ?? undefined,
-    results: (byRun.get(row.id) ?? []).filter((r) => r.source !== "globalping"),
-    globalpingResults: (byRun.get(row.id) ?? []).filter(
-      (r) => r.source === "globalping",
-    ),
-  }));
+    results: values.filter((r) => r.source !== "globalping"),
+    globalpingResults: values.filter((r) => r.source === "globalping"),
+  };
 }
 
 export async function reconcileActive(env: Env) {
