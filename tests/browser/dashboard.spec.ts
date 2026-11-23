@@ -772,12 +772,23 @@ test("custom date range narrows the averaging window", async ({ page }) => {
   await expect(page.locator(".section-title")).toContainText(
     "7D average · 13 tests",
   );
+  // Picking only the start date applies a one-day window immediately.
   await page.getByLabel("Range start date").fill("2026-11-18");
+  await expect(page.locator(".section-title")).toContainText(
+    "18 Nov → 18 Nov average · 2 tests",
+  );
   await page.getByLabel("Range end date").fill("2026-11-20");
   await expect(page.locator(".section-title")).toContainText(
     "18 Nov → 20 Nov average · 6 tests",
   );
   await expect(page.locator("tbody tr").first()).toBeVisible();
+  // A reversed range swaps its ends instead of being silently ignored.
+  await page.getByRole("button", { name: "7D", exact: true }).click();
+  await page.getByLabel("Range start date").fill("2026-11-22");
+  await page.getByLabel("Range end date").fill("2026-11-20");
+  await expect(page.locator(".section-title")).toContainText(
+    "20 Nov → 22 Nov average · 6 tests",
+  );
   // A preset click clears the custom range and returns to the rolling window.
   await page.getByRole("button", { name: "7D", exact: true }).click();
   await expect(page.locator(".section-title")).toContainText("7D average ·");

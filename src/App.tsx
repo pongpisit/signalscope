@@ -259,14 +259,30 @@ export default function App() {
   const [source, setSource] = useState<"pingpe" | "globalping">("pingpe");
   const [metric, setMetric] = useState<"avg" | "loss" | "jitter">("avg");
   const [days, setDays] = useState("7");
-  // Custom date-range window; applies when both dates are filled and ordered.
+  // Custom date-range window. Picking either date alone applies a one-day
+  // window immediately; picking the earlier date second swaps the ends rather
+  // than silently ignoring the range.
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const pickCustomFrom = (value: string) => {
+    setCustomFrom(value);
+    if (value && !customTo) setCustomTo(value);
+    setSelectedId("");
+  };
+  const pickCustomTo = (value: string) => {
+    setCustomTo(value);
+    if (value && !customFrom) setCustomFrom(value);
+    setSelectedId("");
+  };
+  const [customFromIso, customToIso] =
+    customFrom && customTo && Date.parse(customFrom) > Date.parse(customTo)
+      ? [customTo, customFrom]
+      : [customFrom, customTo];
   const customWindow =
-    customFrom && customTo && Date.parse(customFrom) <= Date.parse(customTo)
+    customFromIso && customToIso
       ? {
-          from: Date.parse(customFrom),
-          to: Date.parse(customTo) + 86_399_999,
+          from: Date.parse(customFromIso),
+          to: Date.parse(customToIso) + 86_399_999,
         }
       : null;
   // A window is either the rolling preset (24H/7D/30D) or the custom range.
@@ -301,7 +317,7 @@ export default function App() {
   const tz = data?.settings.timezone ?? data?.timezone ?? defaultTimeZone;
   const tzOffset = timeZoneOffsetLabel(tz, clock);
   const windowLabel = customWindow
-    ? `${calendarDate(customFrom)} → ${calendarDate(customTo)}`
+    ? `${calendarDate(customFromIso)} → ${calendarDate(customToIso)}`
     : `${days}D`;
   const configuredCountry = data?.settings.country ?? "TH";
   const countryLabel = countryName(configuredCountry);
@@ -670,7 +686,11 @@ export default function App() {
         p.location,
         p.provider,
         averaging ? "average" : "individual",
-        averaging ? (customWindow ? `${customFrom}→${customTo}` : days) : "",
+        averaging
+          ? customWindow
+            ? `${customFromIso}→${customToIso}`
+            : days
+          : "",
         averaging ? aggregate.testCount : 1,
         ...targets.flatMap((t) => {
           const result = results.find((r) => r.targetId === t.id);
@@ -1102,20 +1122,14 @@ export default function App() {
                             type="date"
                             aria-label="Range start date"
                             value={customFrom}
-                            onChange={(e) => {
-                              setCustomFrom(e.target.value);
-                              setSelectedId("");
-                            }}
+                            onChange={(e) => pickCustomFrom(e.target.value)}
                           />
                           <span>→</span>
                           <input
                             type="date"
                             aria-label="Range end date"
                             value={customTo}
-                            onChange={(e) => {
-                              setCustomTo(e.target.value);
-                              setSelectedId("");
-                            }}
+                            onChange={(e) => pickCustomTo(e.target.value)}
                           />
                         </label>
                       </div>
@@ -1526,7 +1540,9 @@ export default function App() {
                             ? "Waiting for probe results. This usually takes a few minutes."
                             : countryOnly && run
                               ? `No ${countryLabel} probes were returned in this observation. Select another run or start a new observation.`
-                              : "No probe data yet. Start your first observation."}
+                              : averaging && (data?.runs.length ?? 0) > 0
+                                ? "No shared probe samples across your targets in this window. A failing target or a narrow window leaves nothing to compare — inspect recent runs or widen the range."
+                                : "No probe data yet. Start your first observation."}
                       </div>
                     )}
                     <div className="table-footer">
